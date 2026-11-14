@@ -80,8 +80,10 @@ FColor AOpenWorldGenerator::BiomeColor(EOpenWorldBiome Biome)
 	case EOpenWorldBiome::Grass:  return OpenWorldColors::Grass;
 	case EOpenWorldBiome::Forest: return OpenWorldColors::Forest;
 	case EOpenWorldBiome::Rock:   return OpenWorldColors::Rock;
-	default:                      return OpenWorldColors::Snow;
+	case EOpenWorldBiome::Snow:   return OpenWorldColors::Snow;
 	}
+	checkNoEntry();
+	return OpenWorldColors::Snow;
 }
 
 float AOpenWorldGenerator::SurfaceZ(float WorldX, float WorldY) const
@@ -121,10 +123,12 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 	const int32 V = GridSize + 1;
 	const float Half = GetHalfExtent();
 
-	// corner heights: average of the tiles touching each corner
+	// corner heights and colours: average of the tiles touching each corner
 	VertexHeights.SetNumZeroed(V * V);
-	TArray<FLinearColor> Colors;
-	Colors.SetNumZeroed(V * V);
+	TArray<FColor> VertexColors;
+	VertexColors.SetNumZeroed(V * V);
+	TArray<bool> TouchesLand;
+	TouchesLand.Init(false, V * V);
 	for (int32 VY = 0; VY < V; ++VY)
 	{
 		for (int32 VX = 0; VX < V; ++VX)
@@ -140,12 +144,14 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 					{
 						Sum += TileTop(TX, TY);
 						ColorSum += FLinearColor::FromSRGBColor(BiomeColor(Biomes[Index(TX, TY)]));
+						TouchesLand[VY * V + VX] |= IsLand(TX, TY);
 						++Count;
 					}
 				}
 			}
 			VertexHeights[VY * V + VX] = Sum / Count;
-			Colors[VY * V + VX] = ColorSum / float(Count);
+			// the material reads vertex colour as linear, so store linear values
+			VertexColors[VY * V + VX] = (ColorSum / float(Count)).ToFColor(false);
 		}
 	}
 
@@ -177,7 +183,18 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 		}
 	}
 
-	auto H = [&](int32 VX, int32 VY)
+	// averaging drags coastal land towards the seabed: keep every corner that touches
+	// a land tile above the water, so all land the game treats as dry stays dry
+	const float MinLandZ = GetWaterSurfaceZ() + 12.f;
+	for (int32 I = 0; I < V * V; ++I)
+	{
+		if (TouchesLand[I])
+		{
+			VertexHeights[I] = FMath::Max(VertexHeights[I], MinLandZ);
+		}
+	}
+
+	auto H =[&](int32 VX, int32 VY)
 	{
 		return VertexHeights[FMath::Clamp(VY, 0, V - 1) * V + FMath::Clamp(VX, 0, V - 1)];
 	};
@@ -185,11 +202,9 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 	TArray<FVector> Vertices;
 	TArray<FVector> Normals;
 	TArray<FVector2D> UVs;
-	TArray<FColor> VertexColors;
 	Vertices.Reserve(V * V);
 	Normals.Reserve(V * V);
 	UVs.Reserve(V * V);
-	VertexColors.Reserve(V * V);
 
 	for (int32 VY = 0; VY < V; ++VY)
 	{
@@ -197,14 +212,14 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 		{
 			Vertices.Add(FVector(VX * TileSize - Half, VY * TileSize - Half, H(VX, VY)));
 
-			// smooth normal from central differences
-			const float DZDX = (H(VX + 1, VY) - H(VX - 1, VY)) / (2.f * TileSize);
-			const float DZDY = (H(VX, VY + 1) - H(VX, VY - 1)) / (2.f * TileSize);
+			// smooth normal from central differences (one-sided at the mesh border)
+			const int32 X0 = FMath::Max(VX - 1, 0), X1 = FMath::Min(VX + 1, V - 1);
+			const int32 Y0 = FMath::Max(VY - 1, 0), Y1 = FMath::Min(VY + 1, V - 1);
+			const float DZDX = (H(X1, VY) - H(X0, VY)) / ((X1 - X0) * TileSize);
+			const float DZDY = (H(VX, Y1) - H(VX, Y0)) / ((Y1 - Y0) * TileSize);
 			Normals.Add(FVector(-DZDX, -DZDY, 1.f).GetSafeNormal());
 
 			UVs.Add(FVector2D(VX, VY));
-			// the material reads vertex colour as linear, so store linear values
-			VertexColors.Add(Colors[VY * V + VX].ToFColor(false));
 		}
 	}
 
@@ -468,12 +483,12 @@ void AOpenWorldGenerator::BuildTerrain()
 
 			switch (Biomes[Index(X, Y)])
 			{
-			case EOpenWorldBiome::Seabed: Layer("Seabed", CubeMesh, OpenWorldColors::Seabed, true, false).Instances.Add(Xf); break;
-			case EOpenWorldBiome::Sand:   Layer("Sand", CubeMesh, OpenWorldColors::Sand, true).Instances.Add(Xf); break;
-			case EOpenWorldBiome::Grass:  Layer("Grass", CubeMesh, OpenWorldColors::Grass, true).Instances.Add(Xf); break;
-			case EOpenWorldBiome::Forest: Layer("Forest", CubeMesh, OpenWorldColors::Forest, true).Instances.Add(Xf); break;
-			case EOpenWorldBiome::Rock:   Layer("Rock", CubeMesh, OpenWorldColors::Rock, true).Instances.Add(Xf); break;
-			case EOpenWorldBiome::Snow:   Layer("Snow", CubeMesh, OpenWorldColors::Snow, true, true, 0.5f).Instances.Add(Xf); break;
+			case EOpenWorldBiome::Seabed: Layer("Seabed", CubeMesh, BiomeColor(EOpenWorldBiome::Seabed), true, false).Instances.Add(Xf); break;
+			case EOpenWorldBiome::Sand:   Layer("Sand", CubeMesh, BiomeColor(EOpenWorldBiome::Sand), true).Instances.Add(Xf); break;
+			case EOpenWorldBiome::Grass:  Layer("Grass", CubeMesh, BiomeColor(EOpenWorldBiome::Grass), true).Instances.Add(Xf); break;
+			case EOpenWorldBiome::Forest: Layer("Forest", CubeMesh, BiomeColor(EOpenWorldBiome::Forest), true).Instances.Add(Xf); break;
+			case EOpenWorldBiome::Rock:   Layer("Rock", CubeMesh, BiomeColor(EOpenWorldBiome::Rock), true).Instances.Add(Xf); break;
+			case EOpenWorldBiome::Snow:   Layer("Snow", CubeMesh, BiomeColor(EOpenWorldBiome::Snow), true, true, 0.5f).Instances.Add(Xf); break;
 			}
 		}
 	}
@@ -630,7 +645,8 @@ void AOpenWorldGenerator::BuildDecorations(FRandomStream& Stream)
 				const float OffX = Stream.FRandRange(-0.25f, 0.25f);
 				const float OffY = Stream.FRandRange(-0.25f, 0.25f);
 				// sink slightly so trunks never float on slopes
-				const FVector Base = Ground(OffX, OffY) - FVector(0.f, 0.f, 10.f);
+				const float Sink = TerrainStyle == EOpenWorldTerrainStyle::Smooth ? 10.f : 0.f;
+				const FVector Base = Ground(OffX, OffY) - FVector(0.f, 0.f, Sink);
 				const float Yaw = Stream.FRandRange(0.f, 90.f);
 				const bool bPine = Alt > 0.3f || Stream.FRand() < 0.25f;
 
@@ -770,18 +786,10 @@ void AOpenWorldGenerator::BuildMapTexture()
 		{
 			const int32 I = Index(X, Y);
 			const float Alt = float(Heights[I]) / float(MaxSteps);
-			FLinearColor C;
-			switch (Biomes[I])
-			{
-			case EOpenWorldBiome::Seabed:
-				C = FLinearColor::LerpUsingHSV(FLinearColor(OpenWorldColors::DeepWater), FLinearColor(OpenWorldColors::Water), float(Heights[I]) / float(FMath::Max(WaterLevel, 1)));
-				break;
-			case EOpenWorldBiome::Sand:   C = FLinearColor(OpenWorldColors::Sand); break;
-			case EOpenWorldBiome::Grass:  C = FLinearColor(OpenWorldColors::Grass); break;
-			case EOpenWorldBiome::Forest: C = FLinearColor(OpenWorldColors::Forest); break;
-			case EOpenWorldBiome::Rock:   C = FLinearColor(OpenWorldColors::Rock); break;
-			default:                      C = FLinearColor(OpenWorldColors::Snow); break;
-			}
+			// the minimap shows water depth instead of the seabed colour
+			FLinearColor C = Biomes[I] == EOpenWorldBiome::Seabed
+				? FLinearColor::LerpUsingHSV(FLinearColor(OpenWorldColors::DeepWater), FLinearColor(OpenWorldColors::Water), float(Heights[I]) / float(FMath::Max(WaterLevel, 1)))
+				: FLinearColor(BiomeColor(Biomes[I]));
 			if (Biomes[I] != EOpenWorldBiome::Seabed)
 			{
 				C *= 0.75f + 0.35f * Alt;

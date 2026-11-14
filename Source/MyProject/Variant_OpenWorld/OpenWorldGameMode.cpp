@@ -106,6 +106,8 @@ void AOpenWorldGameMode::EnsureWorld()
 
 	Generator->TerrainStyle = TerrainStyle;
 	Generator->Generate(Seed);
+	// the generator may fall back to Blocky (e.g. missing terrain material): keep the toggle in sync
+	TerrainStyle = Generator->GetTerrainStyle();
 	Total = Generator->GetCrystals().Num();
 	LastSafeLocation = Generator->GetSpawnLocation();
 

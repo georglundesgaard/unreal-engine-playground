@@ -28,7 +28,7 @@ Each time you start the game, you get a new island built from instanced cubes. T
 | `Space` | Jump |
 | `R` | Return to the starting point |
 | `N` | Generate a brand-new world |
-| `T` | Switch between smooth and blocky terrain (same world) |
+| `T` | Switch between smooth and blocky terrain. This reloads the same island, so collected crystals and the timer reset. |
 
 To replay a specific island, open the map with a seed, for example `?Seed=1234` in the map URL. `?Style=Blocky` or `?Style=Smooth` picks the terrain style. In the editor, the console variables `OpenWorld.Seed <n>` and `OpenWorld.TerrainStyle <0|1>` (0 = Blocky, 1 = Smooth, -1 = default) force the seed or style for the next Play or Simulate session.
 
