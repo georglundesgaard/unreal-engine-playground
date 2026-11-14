@@ -63,7 +63,9 @@ void AOpenWorldHUD::DrawHUD()
 	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.35f), Pad - 10.f * UIScale, Pad - 8.f * UIScale, 330.f * UIScale, 120.f * UIScale);
 	DrawShadowedText(FString::Printf(TEXT("Crystals  %d / %d"), GameMode->GetCollected(), GameMode->GetTotal()), Pad, Pad, CrystalBlue, Large, 1.4f * UIScale);
 	DrawShadowedText(FString::Printf(TEXT("Time  %d:%02d"), Secs / 60, Secs % 60), Pad, Pad + 44.f * UIScale, FLinearColor::White, Medium, 1.3f * UIScale);
-	DrawShadowedText(FString::Printf(TEXT("World seed  %d"), GameMode->GetGenerator()->GetSeed()), Pad, Pad + 78.f * UIScale, FLinearColor(0.8f, 0.8f, 0.8f), Small, 1.2f * UIScale);
+	const bool bSmooth = GameMode->GetGenerator()->GetTerrainStyle() == EOpenWorldTerrainStyle::Smooth;
+	DrawShadowedText(FString::Printf(TEXT("World seed  %d   Terrain  %s"), GameMode->GetGenerator()->GetSeed(), bSmooth ? TEXT("Smooth") : TEXT("Blocky")),
+		Pad, Pad + 78.f * UIScale, FLinearColor(0.8f, 0.8f, 0.8f), Small, 1.2f * UIScale);
 
 	// hint towards the nearest crystal
 	const APawn* Pawn = PlayerOwner ? PlayerOwner->GetPawn() : nullptr;
@@ -99,7 +101,7 @@ void AOpenWorldHUD::DrawHUD()
 	}
 
 	// controls
-	DrawShadowedText(TEXT("WASD move   Space jump   Mouse look   R return to start   N new world"),
+	DrawShadowedText(TEXT("WASD move   Space jump   Mouse look   R return to start   N new world   T blocky/smooth"),
 		Pad, Canvas->ClipY - Pad - 20.f * UIScale, FLinearColor(1.f, 1.f, 1.f, 0.8f), Small, 1.2f * UIScale);
 
 	DrawMinimap(UIScale);

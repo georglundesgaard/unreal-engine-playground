@@ -20,6 +20,15 @@
 #include "Engine/ExponentialHeightFog.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "InputCoreTypes.h"
+#include "HAL/IConsoleManager.h"
+
+// developer overrides, handy for comparing worlds in the editor (URL options still win)
+static TAutoConsoleVariable<int32> CVarOpenWorldSeed(
+	TEXT("OpenWorld.Seed"), 0,
+	TEXT("Force the open world seed (0 = random)."));
+static TAutoConsoleVariable<int32> CVarOpenWorldTerrainStyle(
+	TEXT("OpenWorld.TerrainStyle"), -1,
+	TEXT("Force the open world terrain style: -1 = game mode default, 0 = Blocky, 1 = Smooth."));
 
 AOpenWorldGameMode::AOpenWorldGameMode()
 {
@@ -45,12 +54,28 @@ void AOpenWorldGameMode::InitGame(const FString& MapName, const FString& Options
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
 
-	Seed = FixedSeed;
+	Seed = CVarOpenWorldSeed.GetValueOnGameThread() != 0 ? CVarOpenWorldSeed.GetValueOnGameThread() : FixedSeed;
 	const FString SeedOption = UGameplayStatics::ParseOption(Options, TEXT("Seed"));
 	if (!SeedOption.IsEmpty())
 	{
 		Seed = FCString::Atoi(*SeedOption);
 	}
+	TerrainStyle = DefaultTerrainStyle;
+	const int32 StyleOverride = CVarOpenWorldTerrainStyle.GetValueOnGameThread();
+	if (StyleOverride == 0 || StyleOverride == 1)
+	{
+		TerrainStyle = StyleOverride == 0 ? EOpenWorldTerrainStyle::Blocky : EOpenWorldTerrainStyle::Smooth;
+	}
+	const FString StyleOption = UGameplayStatics::ParseOption(Options, TEXT("Style"));
+	if (StyleOption.Equals(TEXT("Blocky"), ESearchCase::IgnoreCase))
+	{
+		TerrainStyle = EOpenWorldTerrainStyle::Blocky;
+	}
+	else if (StyleOption.Equals(TEXT("Smooth"), ESearchCase::IgnoreCase))
+	{
+		TerrainStyle = EOpenWorldTerrainStyle::Smooth;
+	}
+
 	if (Seed == 0)
 	{
 		Seed = int32((FDateTime::Now().GetTicks() ^ FPlatformTime::Cycles64()) % 999983) + 1;
@@ -79,7 +104,10 @@ void AOpenWorldGameMode::EnsureWorld()
 		Generator = World->SpawnActor<AOpenWorldGenerator>(AOpenWorldGenerator::StaticClass(), FTransform::Identity);
 	}
 
+	Generator->TerrainStyle = TerrainStyle;
 	Generator->Generate(Seed);
+	// the generator may fall back to Blocky (e.g. missing terrain material): keep the toggle in sync
+	TerrainStyle = Generator->GetTerrainStyle();
 	Total = Generator->GetCrystals().Num();
 	LastSafeLocation = Generator->GetSpawnLocation();
 
@@ -176,6 +204,12 @@ void AOpenWorldGameMode::Tick(float DeltaSeconds)
 		return;
 	}
 
+	if (PC->WasInputKeyJustPressed(EKeys::T))
+	{
+		SwitchTerrainStyle();
+		return;
+	}
+
 	ACharacter* Character = Cast<ACharacter>(Pawn);
 	auto TeleportPawn = [Pawn, Character](const FVector& Location)
 	{
@@ -242,8 +276,19 @@ void AOpenWorldGameMode::NewWorld()
 {
 	// pass an explicit fresh seed so this is a new world even when FixedSeed is set
 	const int32 NewSeed = int32((FDateTime::Now().GetTicks() ^ FPlatformTime::Cycles64()) % 999983) + 1;
+	ReloadWorld(NewSeed, TerrainStyle);
+}
+
+void AOpenWorldGameMode::SwitchTerrainStyle()
+{
+	ReloadWorld(Seed, TerrainStyle == EOpenWorldTerrainStyle::Smooth ? EOpenWorldTerrainStyle::Blocky : EOpenWorldTerrainStyle::Smooth);
+}
+
+void AOpenWorldGameMode::ReloadWorld(int32 InSeed, EOpenWorldTerrainStyle InStyle)
+{
 	const FString LevelPath = UWorld::RemovePIEPrefix(GetWorld()->GetOutermost()->GetName());
-	UGameplayStatics::OpenLevel(this, FName(*LevelPath), true, FString::Printf(TEXT("Seed=%d"), NewSeed));
+	const TCHAR* StyleName = InStyle == EOpenWorldTerrainStyle::Smooth ? TEXT("Smooth") : TEXT("Blocky");
+	UGameplayStatics::OpenLevel(this, FName(*LevelPath), true, FString::Printf(TEXT("Seed=%d?Style=%s"), InSeed, StyleName));
 }
 
 float AOpenWorldGameMode::GetElapsedTime() const
