@@ -48,8 +48,13 @@ AOpenWorldGenerator::AOpenWorldGenerator()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> ConeFinder(TEXT("/Engine/BasicShapes/Cone.Cone"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MaterialFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+
 	CubeMesh = CubeFinder.Object;
 	ConeMesh = ConeFinder.Object;
+	SphereMesh = SphereFinder.Object;
+	CylinderMesh = CylinderFinder.Object;
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TerrainMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_TerrainVertexColor.M_TerrainVertexColor"));
 	TerrainMaterial = TerrainMaterialFinder.Object;
@@ -183,6 +188,24 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 		}
 	}
 
+	// taller hills: stretch everything above the water line (the coastline stays put),
+	// then add small bumps that fade in away from the shore
+	const float WaterZ = GetWaterSurfaceZ();
+	for (int32 VY = 0; VY < V; ++VY)
+	{
+		for (int32 VX = 0; VX < V; ++VX)
+		{
+			float& Hgt = VertexHeights[VY * V + VX];
+			if (Hgt > WaterZ)
+			{
+				const float Above = Hgt - WaterZ;
+				const float Fade = FMath::Clamp(Above / 300.f, 0.f, 1.f);
+				const float Bumps = Fbm(VX * 0.15f, VY * 0.15f, 3, 12) * DetailNoise * Fade;
+				Hgt = WaterZ + Above * HillScale + Bumps;
+			}
+		}
+	}
+
 	// averaging drags coastal land towards the seabed: keep every corner that touches
 	// a land tile above the water, so all land the game treats as dry stays dry
 	const float MinLandZ = GetWaterSurfaceZ() + 12.f;
@@ -263,7 +286,7 @@ float AOpenWorldGenerator::Fbm(float X, float Y, int32 Octaves, int32 OffsetInde
 	return Sum / Norm;
 }
 
-AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows, float Roughness)
+AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows, float Roughness, float CullDistance)
 {
 	FLayerBuild* Found = PendingLayers.Find(Name);
 	if (!Found)
@@ -274,6 +297,7 @@ AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStatic
 		Found->bCollision = bCollision;
 		Found->bShadows = bShadows;
 		Found->Roughness = Roughness;
+		Found->CullDistance = CullDistance;
 	}
 	return *Found;
 }
@@ -293,6 +317,8 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	MaxSteps = FMath::Max(MaxSteps, WaterLevel + 4);
 	MaxClimbSteps = FMath::Max(MaxClimbSteps, 1);
 	NumCrystals = FMath::Max(NumCrystals, 1);
+	HillScale = FMath::Clamp(HillScale, 1.f, 4.f);
+	DetailNoise = FMath::Max(DetailNoise, 0.f);
 
 	// the terrain never moves: static root so static instance layers can attach to it
 	Root->SetMobility(EComponentMobility::Static);
@@ -317,7 +343,14 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 		BuildTerrain();
 	}
 	PickSpawnAndCrystals(Stream);
-	BuildDecorations(Stream);
+	if (TerrainStyle == EOpenWorldTerrainStyle::Smooth)
+	{
+		BuildDetailedDecorations(Stream);
+	}
+	else
+	{
+		BuildDecorations(Stream);
+	}
 	BuildClouds(Stream);
 	FlushLayers();
 	BuildMapTexture();
@@ -711,9 +744,331 @@ void AOpenWorldGenerator::BuildDecorations(FRandomStream& Stream)
 	}
 }
 
+void AOpenWorldGenerator::BuildDetailedDecorations(FRandomStream& Stream)
+{
+	// palette
+	const FColor Bark(96, 66, 44), BarkDark(70, 50, 36), StumpTop(176, 144, 100);
+	const FColor BirchBark(228, 224, 212), BirchMark(52, 50, 48);
+	const FColor LeafColors[3] = { FColor(58, 140, 56), FColor(86, 162, 60), FColor(40, 118, 52) };
+	const FColor LeafAutumn(222, 132, 46), LeafBirch(150, 198, 82);
+	const FColor PineColors[2] = { FColor(34, 96, 60), FColor(48, 112, 68) };
+	const FColor SnowWhite(244, 248, 252);
+	const FColor BushColors[2] = { FColor(50, 120, 48), FColor(74, 142, 54) };
+	const FColor Berry(204, 32, 52);
+	const FColor GrassColors[2] = { FColor(92, 170, 62), FColor(124, 186, 72) };
+	const FColor Stem(70, 140, 60);
+	const FColor Petals[4] = { FColor(228, 60, 72), FColor(248, 214, 60), FColor(150, 92, 212), FColor(250, 250, 250) };
+	const FColor FlowerHeart(232, 176, 40);
+	const FColor MushStem(236, 230, 214), MushCap(206, 40, 36);
+	const FColor RockColors[3] = { FColor(138, 134, 128), FColor(116, 112, 108), FColor(158, 152, 144) };
+	const FColor Reed(170, 162, 98), Cattail(96, 64, 40);
+
+	// small props are culled by distance; trees, rocks and logs are always drawn
+	constexpr float NearCull = 7000.f;
+	constexpr float MidCull = 14000.f;
+
+	// basic shapes are 100 units across: these helpers take real sizes in cm
+	auto Add = [this](FName Name, UStaticMesh* Mesh, const FColor& Color, bool bCollision, bool bShadows, float Cull, const FTransform& Xf)
+	{
+		Layer(Name, Mesh, Color, bCollision, bShadows, 0.85f, Cull).Instances.Add(Xf);
+	};
+	// cylinder whose axis follows Rot, centred on Center
+	auto Cyl = [&](FName Name, const FColor& Color, bool bCollision, bool bShadows, float Cull, const FVector& Center, const FRotator& Rot, float Radius, float Length)
+	{
+		Add(Name, CylinderMesh, Color, bCollision, bShadows, Cull, FTransform(Rot, Center, FVector(Radius / 50.f, Radius / 50.f, Length / 100.f)));
+	};
+	// ellipsoid with the given radii
+	auto Ball = [&](FName Name, const FColor& Color, bool bCollision, bool bShadows, float Cull, const FVector& Center, const FVector& Radii, const FRotator& Rot = FRotator::ZeroRotator)
+	{
+		Add(Name, SphereMesh, Color, bCollision, bShadows, Cull, FTransform(Rot, Center, Radii / 50.f));
+	};
+	// upright cone standing on BaseCenter
+	auto Cone = [&](FName Name, const FColor& Color, float Cull, const FVector& BaseCenter, float Radius, float Height, float Yaw)
+	{
+		Add(Name, ConeMesh, Color, false, true, Cull, FTransform(FRotator(0.f, Yaw, 0.f), BaseCenter + FVector(0.f, 0.f, Height * 0.5f), FVector(Radius / 50.f, Radius / 50.f, Height / 100.f)));
+	};
+	auto Ground = [this](float WX, float WY)
+	{
+		return FVector(WX, WY, SurfaceZ(WX, WY));
+	};
+
+	for (int32 Y = 0; Y < GridSize; ++Y)
+	{
+		for (int32 X = 0; X < GridSize; ++X)
+		{
+			const int32 I = Index(X, Y);
+			if (!IsLand(X, Y) || ReservedTiles.Contains(I))
+			{
+				continue;
+			}
+
+			const EOpenWorldBiome B = Biomes[I];
+			const FVector Center = TileCenter(X, Y);
+			const float Alt = float(Heights[I] - WaterLevel) / float(MaxSteps - WaterLevel);
+			const bool bGreen = B == EOpenWorldBiome::Grass || B == EOpenWorldBiome::Forest;
+
+			auto RandomGround = [&](float Range)
+			{
+				return Ground(Center.X + Stream.FRandRange(-Range, Range) * TileSize, Center.Y + Stream.FRandRange(-Range, Range) * TileSize);
+			};
+
+			// ---- trees ----
+			const float TreeChance = B == EOpenWorldBiome::Forest ? 0.22f : (B == EOpenWorldBiome::Grass ? 0.03f : (B == EOpenWorldBiome::Rock ? 0.02f : 0.f));
+			if (Stream.FRand() < TreeChance)
+			{
+				HasTree[I] = true;
+				const FVector Base = RandomGround(0.25f) - FVector(0.f, 0.f, 15.f);
+				const float Yaw = Stream.FRandRange(0.f, 360.f);
+				const float Kind = Stream.FRand();
+
+				// pines take over with altitude; lowlands are mostly oaks and birches
+				const float PineChance = FMath::Lerp(0.2f, 1.f, FMath::Clamp((Alt - 0.25f) / 0.3f, 0.f, 1.f));
+				if (B == EOpenWorldBiome::Rock || Kind < PineChance)
+				{
+					// pine: dark trunk and stacked cones, snow-capped high up
+					const float S = Stream.FRandRange(0.8f, 1.3f);
+					const float TrunkH = 160.f * S;
+					Cyl("PineTrunk", BarkDark, true, true, 0.f, Base + FVector(0.f, 0.f, TrunkH * 0.5f), FRotator::ZeroRotator, 14.f * S, TrunkH);
+					const int32 Variant = Stream.RandRange(0, 1);
+					const int32 Tiers = Stream.RandRange(3, 4);
+					float Z = TrunkH * 0.55f;
+					float R = 140.f * S;
+					for (int32 T = 0; T < Tiers; ++T)
+					{
+						const float H = R * 1.5f;
+						Cone(FName(TEXT("PineNeedles"), Variant + 1), PineColors[Variant], 0.f, Base + FVector(0.f, 0.f, Z), R, H, Yaw + T * 20.f);
+						Z += H * 0.45f;
+						R *= 0.74f;
+					}
+					if (Alt > 0.55f)
+					{
+						Cone("PineSnow", SnowWhite, 0.f, Base + FVector(0.f, 0.f, Z), R * 1.05f, R * 1.5f, Yaw);
+					}
+				}
+				else if (Kind < PineChance + (1.f - PineChance) * 0.3f)
+				{
+					// birch: slim white trunk with dark marks, tall light-green crown
+					const float S = Stream.FRandRange(0.8f, 1.2f);
+					const float TrunkH = 320.f * S;
+					const float R = 10.f * S;
+					Cyl("BirchTrunk", BirchBark, true, true, 0.f, Base + FVector(0.f, 0.f, TrunkH * 0.5f), FRotator::ZeroRotator, R, TrunkH);
+					const int32 Marks = Stream.RandRange(3, 5);
+					for (int32 M = 0; M < Marks; ++M)
+					{
+						Cyl("BirchMark", BirchMark, false, false, NearCull, Base + FVector(0.f, 0.f, Stream.FRandRange(0.12f, 0.8f) * TrunkH), FRotator::ZeroRotator, R * 1.08f, 6.f);
+					}
+					for (int32 C = 0; C < 3; ++C)
+					{
+						const FVector P = Base + FVector(Stream.FRandRange(-30.f, 30.f) * S, Stream.FRandRange(-30.f, 30.f) * S, TrunkH * 0.78f + C * 60.f * S);
+						const float K = Stream.FRandRange(0.8f, 1.1f) * S;
+						Ball("LeavesBirch", LeafBirch, false, true, 0.f, P, FVector(70.f, 70.f, 110.f) * K);
+					}
+				}
+				else
+				{
+					// oak: thick trunk with root flare, two branches and a clustered crown
+					const float S = Stream.FRandRange(0.85f, 1.25f);
+					const float TrunkH = 230.f * S;
+					const float TrunkR = 20.f * S;
+					Cyl("OakTrunk", Bark, true, true, 0.f, Base + FVector(0.f, 0.f, TrunkH * 0.5f), FRotator::ZeroRotator, TrunkR, TrunkH);
+					Cyl("OakTrunk", Bark, true, true, 0.f, Base + FVector(0.f, 0.f, 15.f), FRotator::ZeroRotator, TrunkR * 1.5f, 30.f);
+					for (int32 Br = 0; Br < 2; ++Br)
+					{
+						const FRotator Rot(Stream.FRandRange(35.f, 50.f), Yaw + Br * 180.f + Stream.FRandRange(-30.f, 30.f), 0.f);
+						const float Len = 110.f * S;
+						const FVector Dir = Rot.RotateVector(FVector::UpVector);
+						Cyl("OakBranch", Bark, false, true, MidCull, Base + FVector(0.f, 0.f, TrunkH * 0.7f) + Dir * Len * 0.5f, Rot, 7.f * S, Len);
+					}
+
+					const bool bAutumn = Stream.FRand() < 0.1f;
+					const int32 Variant = Stream.RandRange(0, 2);
+					const FName LeafName = bAutumn ? FName("LeavesAutumn") : FName(TEXT("Leaves"), Variant + 1);
+					const FColor LeafColor = bAutumn ? LeafAutumn : LeafColors[Variant];
+					const float R = 150.f * S;
+					const FVector Crown = Base + FVector(0.f, 0.f, TrunkH + R * 0.35f);
+					Ball(LeafName, LeafColor, false, true, 0.f, Crown, FVector(R, R, R * 0.85f));
+					const int32 Lobes = Stream.RandRange(3, 5);
+					for (int32 L = 0; L < Lobes; ++L)
+					{
+						const FVector Off(Stream.FRandRange(-0.7f, 0.7f) * R, Stream.FRandRange(-0.7f, 0.7f) * R, Stream.FRandRange(-0.2f, 0.45f) * R);
+						const float LR = R * Stream.FRandRange(0.5f, 0.75f);
+						Ball(LeafName, LeafColor, false, true, 0.f, Crown + Off, FVector(LR, LR, LR * 0.9f));
+					}
+				}
+				continue;
+			}
+
+			// ---- rocks: a main boulder with smaller ones and pebbles around it ----
+			const float RockChance = B == EOpenWorldBiome::Rock ? 0.12f : (B == EOpenWorldBiome::Snow ? 0.05f : (B == EOpenWorldBiome::Sand ? 0.02f : 0.015f));
+			if (Stream.FRand() < RockChance)
+			{
+				const FVector P = RandomGround(0.25f);
+				const float R = Stream.FRandRange(60.f, 150.f);
+				const int32 Count = Stream.RandRange(1, 3);
+				for (int32 K = 0; K < Count; ++K)
+				{
+					const float RR = K == 0 ? R : R * Stream.FRandRange(0.4f, 0.7f);
+					const FVector Pos = P + (K == 0 ? FVector::ZeroVector : FVector(Stream.FRandRange(-R, R), Stream.FRandRange(-R, R), 0.f)) + FVector(0.f, 0.f, RR * 0.25f);
+					const int32 Variant = Stream.RandRange(0, 2);
+					const FRotator Rot(Stream.FRandRange(-12.f, 12.f), Stream.FRandRange(0.f, 360.f), Stream.FRandRange(-12.f, 12.f));
+					Ball(FName(TEXT("Rock"), Variant + 1), RockColors[Variant], true, true, K == 0 ? 0.f : MidCull, Pos,
+						FVector(RR * Stream.FRandRange(1.f, 1.4f), RR, RR * Stream.FRandRange(0.55f, 0.8f)), Rot);
+					if (B == EOpenWorldBiome::Snow)
+					{
+						Ball("RockSnow", SnowWhite, false, false, MidCull, Pos + FVector(0.f, 0.f, RR * 0.38f), FVector(RR * 0.8f, RR * 0.7f, RR * 0.3f), Rot);
+					}
+				}
+				const int32 Pebbles = Stream.RandRange(3, 6);
+				for (int32 K = 0; K < Pebbles; ++K)
+				{
+					const float PR = Stream.FRandRange(8.f, 18.f);
+					const int32 Variant = Stream.RandRange(0, 2);
+					const FVector Pos = Ground(P.X + Stream.FRandRange(-2.f, 2.f) * R, P.Y + Stream.FRandRange(-2.f, 2.f) * R);
+					Ball(FName(TEXT("Pebble"), Variant + 1), RockColors[Variant], false, false, NearCull, Pos, FVector(PR * 1.3f, PR, PR * 0.6f), FRotator(0.f, Stream.FRandRange(0.f, 360.f), 0.f));
+				}
+			}
+
+			// ---- forest floor: fallen logs with a stump, and mushrooms ----
+			if (B == EOpenWorldBiome::Forest && Stream.FRand() < 0.012f)
+			{
+				const FVector P = RandomGround(0.2f);
+				const float Len = Stream.FRandRange(250.f, 380.f);
+				const FRotator Lying(0.f, Stream.FRandRange(0.f, 360.f), 90.f);
+				Cyl("Log", Bark, true, true, MidCull, P + FVector(0.f, 0.f, 18.f), Lying, 22.f, Len);
+				const FVector StumpPos = RandomGround(0.35f);
+				Cyl("Stump", Bark, true, true, MidCull, StumpPos + FVector(0.f, 0.f, 18.f), FRotator::ZeroRotator, 24.f, 40.f);
+				Cyl("StumpTop", StumpTop, false, false, NearCull, StumpPos + FVector(0.f, 0.f, 38.5f), FRotator::ZeroRotator, 20.f, 1.5f);
+			}
+			if (B == EOpenWorldBiome::Forest && Stream.FRand() < 0.05f)
+			{
+				const int32 Count = Stream.RandRange(1, 3);
+				for (int32 K = 0; K < Count; ++K)
+				{
+					const FVector P = RandomGround(0.4f);
+					const float H = Stream.FRandRange(14.f, 24.f);
+					Cyl("MushroomStem", MushStem, false, false, NearCull, P + FVector(0.f, 0.f, H * 0.5f), FRotator::ZeroRotator, 3.5f, H);
+					Ball("MushroomCap", MushCap, false, false, NearCull, P + FVector(0.f, 0.f, H), FVector(12.f, 12.f, 7.f));
+					for (int32 D = 0; D < 3; ++D)
+					{
+						Ball("MushroomDot", SnowWhite, false, false, NearCull, P + FVector(Stream.FRandRange(-6.f, 6.f), Stream.FRandRange(-6.f, 6.f), H + 5.5f), FVector(2.f));
+					}
+				}
+			}
+
+			// ---- bushes, some with berries ----
+			if (bGreen && Stream.FRand() < (B == EOpenWorldBiome::Forest ? 0.12f : 0.06f))
+			{
+				const FVector P = RandomGround(0.35f);
+				const float R = Stream.FRandRange(45.f, 75.f);
+				const int32 Variant = Stream.RandRange(0, 1);
+				for (int32 K = 0; K < 3; ++K)
+				{
+					const FVector Off(Stream.FRandRange(-0.6f, 0.6f) * R, Stream.FRandRange(-0.6f, 0.6f) * R, R * 0.35f);
+					Ball(FName(TEXT("Bush"), Variant + 1), BushColors[Variant], false, true, MidCull, P + Off, FVector(R, R, R * 0.8f));
+				}
+				if (Stream.FRand() < 0.3f)
+				{
+					const int32 Berries = Stream.RandRange(4, 7);
+					for (int32 K = 0; K < Berries; ++K)
+					{
+						const FVector Off(Stream.FRandRange(-0.9f, 0.9f) * R, Stream.FRandRange(-0.9f, 0.9f) * R, Stream.FRandRange(0.6f, 1.05f) * R);
+						Ball("Berries", Berry, false, false, NearCull, P + Off, FVector(6.f));
+					}
+				}
+			}
+
+			// ---- grass tufts: a few thin tilted blades ----
+			const float TuftChance = bGreen ? 0.8f : (B == EOpenWorldBiome::Rock ? 0.1f : 0.f);
+			const int32 Tufts = bGreen ? Stream.RandRange(1, 3) : 1;
+			for (int32 Tuft = 0; Tuft < Tufts; ++Tuft)
+			{
+				if (Stream.FRand() >= TuftChance)
+				{
+					continue;
+				}
+				const FVector P = RandomGround(0.45f) - FVector(0.f, 0.f, 4.f);
+				const int32 Variant = Stream.RandRange(0, 1);
+				const int32 Blades = Stream.RandRange(4, 6);
+				for (int32 K = 0; K < Blades; ++K)
+				{
+					const float H = Stream.FRandRange(30.f, 55.f);
+					const FRotator Rot(Stream.FRandRange(-18.f, 18.f), Stream.FRandRange(0.f, 360.f), Stream.FRandRange(-18.f, 18.f));
+					const FVector BladeBase = P + FVector(Stream.FRandRange(-18.f, 18.f), Stream.FRandRange(-18.f, 18.f), 0.f);
+					Add(FName(TEXT("GrassBlade"), Variant + 1), ConeMesh, GrassColors[Variant], false, false, NearCull,
+						FTransform(Rot, BladeBase + Rot.RotateVector(FVector(0.f, 0.f, H * 0.5f)), FVector(0.07f, 0.07f, H / 100.f)));
+				}
+			}
+
+			// ---- flowers on stems ----
+			if (bGreen && Stream.FRand() < (B == EOpenWorldBiome::Grass ? 0.1f : 0.04f))
+			{
+				const int32 Colour = Stream.RandRange(0, 3);
+				const int32 Count = Stream.RandRange(3, 6);
+				for (int32 K = 0; K < Count; ++K)
+				{
+					const FVector P = RandomGround(0.4f);
+					const float H = Stream.FRandRange(25.f, 45.f);
+					Cyl("FlowerStem", Stem, false, false, NearCull, P + FVector(0.f, 0.f, H * 0.5f), FRotator::ZeroRotator, 1.5f, H);
+					Ball(FName(TEXT("FlowerPetals"), Colour + 1), Petals[Colour], false, false, NearCull, P + FVector(0.f, 0.f, H), FVector(9.f, 9.f, 4.f));
+					Ball("FlowerHeart", FlowerHeart, false, false, NearCull, P + FVector(0.f, 0.f, H + 3.f), FVector(3.5f));
+				}
+			}
+
+			// ---- reeds and cattails along the shore ----
+			if (B == EOpenWorldBiome::Sand && Stream.FRand() < 0.15f)
+			{
+				bool bShore = false;
+				const FIntPoint Dirs[4] = { {1,0}, {-1,0}, {0,1}, {0,-1} };
+				for (const FIntPoint& D : Dirs)
+				{
+					const int32 NX = X + D.X, NY = Y + D.Y;
+					bShore |= NX >= 0 && NY >= 0 && NX < GridSize && NY < GridSize && !IsLand(NX, NY);
+				}
+				if (bShore)
+				{
+					const int32 Stalks = Stream.RandRange(5, 9);
+					for (int32 K = 0; K < Stalks; ++K)
+					{
+						const FVector P = RandomGround(0.4f);
+						const float H = Stream.FRandRange(70.f, 130.f);
+						const FRotator Rot(Stream.FRandRange(-10.f, 10.f), Stream.FRandRange(0.f, 360.f), Stream.FRandRange(-10.f, 10.f));
+						const bool bGreenStalk = Stream.FRand() < 0.5f;
+						Cyl(bGreenStalk ? FName("ReedGreen") : FName("ReedDry"), bGreenStalk ? Stem : Reed, false, false, NearCull,
+							P + Rot.RotateVector(FVector(0.f, 0.f, H * 0.5f)), Rot, 2.f, H);
+						if (Stream.FRand() < 0.4f)
+						{
+							Ball("Cattail", Cattail, false, false, NearCull, P + Rot.RotateVector(FVector(0.f, 0.f, H * 0.85f)), FVector(4.f, 4.f, 12.f), Rot);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 void AOpenWorldGenerator::BuildClouds(FRandomStream& Stream)
 {
 	const float Half = GetHalfExtent() * 1.3f;
+
+	if (TerrainStyle == EOpenWorldTerrainStyle::Smooth)
+	{
+		// fluffy clouds: a flat-bottomed cluster of overlapping spheres
+		for (int32 C = 0; C < 30; ++C)
+		{
+			const FVector Base(Stream.FRandRange(-Half, Half), Stream.FRandRange(-Half, Half), Stream.FRandRange(5200.f, 6400.f));
+			const float Size = Stream.FRandRange(0.8f, 1.4f);
+			const int32 Puffs = Stream.RandRange(5, 9);
+			for (int32 P = 0; P < Puffs; ++P)
+			{
+				const float R = Stream.FRandRange(250.f, 450.f) * Size;
+				const FVector Pos = Base + FVector(Stream.FRandRange(-700.f, 700.f) * Size, Stream.FRandRange(-400.f, 400.f) * Size, Stream.FRandRange(0.f, 0.5f) * R);
+				Layer("CloudPuff", SphereMesh, OpenWorldColors::Cloud, false, false, 1.f).Instances.Add(
+					FTransform(FRotator::ZeroRotator, Pos, FVector(R / 50.f, R / 50.f, R / 50.f * 0.6f)));
+			}
+		}
+		return;
+	}
+
 	for (int32 C = 0; C < 36; ++C)
 	{
 		const FVector Base(Stream.FRandRange(-Half, Half), Stream.FRandRange(-Half, Half), Stream.FRandRange(4000.f, 5200.f));
@@ -742,6 +1097,11 @@ void AOpenWorldGenerator::FlushLayers()
 		ISM->SetStaticMesh(L.Mesh);
 		ISM->SetMobility(EComponentMobility::Static);
 		ISM->SetCastShadow(L.bShadows);
+		if (L.CullDistance > 0.f)
+		{
+			// small props fade out with distance to keep the instance count on screen low
+			ISM->SetCullDistances(int32(L.CullDistance * 0.8f), int32(L.CullDistance));
+		}
 		if (L.bCollision)
 		{
 			ISM->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
