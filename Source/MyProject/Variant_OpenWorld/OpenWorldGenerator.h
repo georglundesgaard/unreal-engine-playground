@@ -143,6 +143,10 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> TerrainMaterial;
 
+	/** Material for clouds: lit, with a soft emissive glow so undersides facing away from the sun don't go dark */
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> CloudMaterial;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UProceduralMeshComponent> TerrainMesh;
 
@@ -167,6 +171,8 @@ private:
 		float Roughness = 0.8f;
 		/** Instances beyond this distance (cm) are culled; 0 = never */
 		float CullDistance = 0.f;
+		/** Parent material for this layer; BasicShapeMaterial when null. Must expose a "Color" parameter. */
+		UMaterialInterface* Material = nullptr;
 		TArray<FTransform> Instances;
 	};
 

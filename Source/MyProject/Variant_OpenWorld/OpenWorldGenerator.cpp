@@ -58,6 +58,9 @@ AOpenWorldGenerator::AOpenWorldGenerator()
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TerrainMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_TerrainVertexColor.M_TerrainVertexColor"));
 	TerrainMaterial = TerrainMaterialFinder.Object;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> CloudMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_Cloud.M_Cloud"));
+	CloudMaterial = CloudMaterialFinder.Object;
 	BaseMaterial = MaterialFinder.Object;
 
 	Water->SetStaticMesh(CubeMesh);
@@ -1101,7 +1104,9 @@ void AOpenWorldGenerator::BuildClouds(FRandomStream& Stream)
 			{
 				const float R = Stream.FRandRange(250.f, 450.f) * Size;
 				const FVector Pos = Base + FVector(Stream.FRandRange(-700.f, 700.f) * Size, Stream.FRandRange(-400.f, 400.f) * Size, Stream.FRandRange(0.f, 0.5f) * R);
-				Layer("CloudPuff", SphereMesh, OpenWorldColors::Cloud, false, false, 1.f).Instances.Add(
+				FLayerBuild& CloudLayer = Layer("CloudPuff", SphereMesh, OpenWorldColors::Cloud, false, false, 1.f);
+				CloudLayer.Material = CloudMaterial;
+				CloudLayer.Instances.Add(
 					FTransform(FRotator::ZeroRotator, Pos, FVector(R / 50.f, R / 50.f, R / 50.f * 0.6f)));
 			}
 		}
@@ -1115,7 +1120,9 @@ void AOpenWorldGenerator::BuildClouds(FRandomStream& Stream)
 		for (int32 P = 0; P < Puffs; ++P)
 		{
 			const FVector Pos = Base + FVector(Stream.FRandRange(-600.f, 600.f), Stream.FRandRange(-400.f, 400.f), Stream.FRandRange(-60.f, 60.f));
-			Layer("Cloud", CubeMesh, OpenWorldColors::Cloud, false, false, 1.f).Instances.Add(
+			FLayerBuild& CloudLayer = Layer("Cloud", CubeMesh, OpenWorldColors::Cloud, false, false, 1.f);
+			CloudLayer.Material = CloudMaterial;
+			CloudLayer.Instances.Add(
 				FTransform(FRotator::ZeroRotator, Pos, FVector(Stream.FRandRange(6.f, 12.f), Stream.FRandRange(4.f, 8.f), Stream.FRandRange(1.2f, 2.2f))));
 		}
 	}
@@ -1151,9 +1158,9 @@ void AOpenWorldGenerator::FlushLayers()
 			ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		}
 
-		if (BaseMaterial)
+		if (UMaterialInterface* Parent = L.Material ? L.Material : BaseMaterial.Get())
 		{
-			UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(Parent, this);
 			Mat->SetVectorParameterValue(TEXT("Color"), L.Color);
 			Mat->SetScalarParameterValue(TEXT("Roughness"), L.Roughness);
 			ISM->SetMaterial(0, Mat);
