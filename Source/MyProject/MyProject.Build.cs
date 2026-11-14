@@ -37,7 +37,8 @@ public class MyProject : ModuleRules
 			"MyProject/Variant_SideScrolling/AI",
 			"MyProject/Variant_SideScrolling/Gameplay",
 			"MyProject/Variant_SideScrolling/Interfaces",
-			"MyProject/Variant_SideScrolling/UI"
+			"MyProject/Variant_SideScrolling/UI",
+			"MyProject/Variant_OpenWorld"
 		});
 
 		// Uncomment if you are using Slate UI
