@@ -12,6 +12,17 @@ class UStaticMesh;
 class UMaterialInterface;
 class UTexture2D;
 class AOpenWorldCrystal;
+class UProceduralMeshComponent;
+
+/** How the terrain surface is rendered */
+UENUM(BlueprintType)
+enum class EOpenWorldTerrainStyle : uint8
+{
+	/** One instanced cube column per tile: stepped voxel look */
+	Blocky,
+	/** One continuous mesh with smoothed heights, smooth normals and blended biome colours */
+	Smooth
+};
 
 /** Surface type of a terrain tile */
 UENUM()
@@ -71,6 +82,14 @@ public:
 	UPROPERTY(EditAnywhere, Category="World")
 	float NoiseScale = 0.022f;
 
+	/** Terrain rendering style. Set before Generate(). */
+	UPROPERTY(EditAnywhere, Category="World")
+	EOpenWorldTerrainStyle TerrainStyle = EOpenWorldTerrainStyle::Smooth;
+
+	/** Smoothing passes applied to the smooth terrain's vertex heights */
+	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=0, ClampMax=8))
+	int32 SmoothPasses = 2;
+
 	/** Number of crystals to collect */
 	UPROPERTY(EditAnywhere, Category="Gameplay")
 	int32 NumCrystals = 8;
@@ -79,6 +98,7 @@ public:
 	void Generate(int32 InSeed);
 
 	int32 GetSeed() const { return Seed; }
+	EOpenWorldTerrainStyle GetTerrainStyle() const { return TerrainStyle; }
 	FVector GetSpawnLocation() const { return SpawnLocation; }
 	float GetWaterSurfaceZ() const { return WaterLevel * StepHeight + StepHeight * 0.6f; }
 	float GetHalfExtent() const { return GridSize * TileSize * 0.5f; }
@@ -104,6 +124,13 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> BaseMaterial;
+
+	/** Material that renders vertex colours (used by the smooth terrain) */
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> TerrainMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UProceduralMeshComponent> TerrainMesh;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UInstancedStaticMeshComponent>> MeshLayers;
@@ -136,8 +163,15 @@ private:
 	float TileTop(int32 X, int32 Y) const { return Heights[Index(X, Y)] * StepHeight; }
 	bool IsLand(int32 X, int32 Y) const { return Heights[Index(X, Y)] > WaterLevel; }
 
+	/** Ground height under a world XY position for the current terrain style */
+	float SurfaceZ(float WorldX, float WorldY) const;
+	/** Ground height at a tile's centre */
+	float TileSurface(int32 X, int32 Y) const;
+	static FColor BiomeColor(EOpenWorldBiome Biome);
+
 	void BuildHeights(FRandomStream& Stream);
 	void BuildTerrain();
+	void BuildSmoothTerrain();
 	void PickSpawnAndCrystals(FRandomStream& Stream);
 	void BuildDecorations(FRandomStream& Stream);
 	void BuildClouds(FRandomStream& Stream);
@@ -146,6 +180,8 @@ private:
 	TMap<FName, FLayerBuild> PendingLayers;
 	TArray<FVector2D> NoiseOffsets;
 	TArray<int32> Heights;
+	/** Smooth terrain: heights at tile corners, (GridSize + 1)^2 entries */
+	TArray<float> VertexHeights;
 	TArray<EOpenWorldBiome> Biomes;
 	TArray<bool> HasTree;
 	TSet<int32> ReservedTiles;

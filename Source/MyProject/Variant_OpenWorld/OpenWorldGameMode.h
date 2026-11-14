@@ -4,9 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "OpenWorldGenerator.h"
 #include "OpenWorldGameMode.generated.h"
 
-class AOpenWorldGenerator;
 class AOpenWorldCrystal;
 
 /**
@@ -16,8 +16,10 @@ class AOpenWorldCrystal;
  *  Controls (in addition to the third person template ones):
  *   N - generate a brand new world
  *   R - return to the starting point
+ *   T - switch between blocky and smooth terrain (same world seed)
  *
- *  Pass ?Seed=1234 in the map URL to replay a specific world.
+ *  Pass ?Seed=1234 in the map URL to replay a specific world,
+ *  and ?Style=Blocky or ?Style=Smooth to pick the terrain style.
  */
 UCLASS()
 class AOpenWorldGameMode : public AGameModeBase
@@ -40,6 +42,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Open World")
 	void NewWorld();
 
+	/** Reloads the same world with the other terrain style */
+	UFUNCTION(BlueprintCallable, Category="Open World")
+	void SwitchTerrainStyle();
+
 	AOpenWorldGenerator* GetGenerator() const { return Generator; }
 	int32 GetCollected() const { return Collected; }
 	int32 GetTotal() const { return Total; }
@@ -54,6 +60,15 @@ protected:
 	/** Fixed world seed. 0 = random every time. */
 	UPROPERTY(EditAnywhere, Category="Open World")
 	int32 FixedSeed = 0;
+
+	/** Terrain style used unless the map URL has ?Style= */
+	UPROPERTY(EditAnywhere, Category="Open World")
+	EOpenWorldTerrainStyle DefaultTerrainStyle = EOpenWorldTerrainStyle::Smooth;
+
+	EOpenWorldTerrainStyle TerrainStyle = EOpenWorldTerrainStyle::Smooth;
+
+	/** Reloads the current level with the given seed and terrain style */
+	void ReloadWorld(int32 InSeed, EOpenWorldTerrainStyle InStyle);
 
 	void EnsureWorld();
 	void SpawnEnvironment();

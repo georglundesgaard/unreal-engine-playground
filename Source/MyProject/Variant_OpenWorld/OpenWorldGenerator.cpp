@@ -9,6 +9,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
+#include "ProceduralMeshComponent.h"
 
 namespace OpenWorldColors
 {
@@ -49,6 +50,9 @@ AOpenWorldGenerator::AOpenWorldGenerator()
 
 	CubeMesh = CubeFinder.Object;
 	ConeMesh = ConeFinder.Object;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TerrainMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_TerrainVertexColor.M_TerrainVertexColor"));
+	TerrainMaterial = TerrainMaterialFinder.Object;
 	BaseMaterial = MaterialFinder.Object;
 
 	Water->SetStaticMesh(CubeMesh);
@@ -65,6 +69,169 @@ FVector2D AOpenWorldGenerator::WorldToMap(const FVector& WorldLocation) const
 	const float Extent = GridSize * TileSize;
 	const float Half = Extent * 0.5f;
 	return FVector2D((WorldLocation.Y + Half) / Extent, 1.f - (WorldLocation.X + Half) / Extent);
+}
+
+FColor AOpenWorldGenerator::BiomeColor(EOpenWorldBiome Biome)
+{
+	switch (Biome)
+	{
+	case EOpenWorldBiome::Seabed: return OpenWorldColors::Seabed;
+	case EOpenWorldBiome::Sand:   return OpenWorldColors::Sand;
+	case EOpenWorldBiome::Grass:  return OpenWorldColors::Grass;
+	case EOpenWorldBiome::Forest: return OpenWorldColors::Forest;
+	case EOpenWorldBiome::Rock:   return OpenWorldColors::Rock;
+	default:                      return OpenWorldColors::Snow;
+	}
+}
+
+float AOpenWorldGenerator::SurfaceZ(float WorldX, float WorldY) const
+{
+	const float Half = GetHalfExtent();
+	const float GX = FMath::Clamp((WorldX + Half) / TileSize, 0.f, float(GridSize) - KINDA_SMALL_NUMBER);
+	const float GY = FMath::Clamp((WorldY + Half) / TileSize, 0.f, float(GridSize) - KINDA_SMALL_NUMBER);
+	const int32 X = FMath::FloorToInt(GX);
+	const int32 Y = FMath::FloorToInt(GY);
+
+	if (TerrainStyle == EOpenWorldTerrainStyle::Blocky || VertexHeights.Num() == 0)
+	{
+		return TileTop(X, Y);
+	}
+
+	// interpolate across the same two triangles the mesh uses for this quad
+	const int32 V = GridSize + 1;
+	const float FX = GX - X;
+	const float FY = GY - Y;
+	const float H00 = VertexHeights[Y * V + X];
+	const float H10 = VertexHeights[Y * V + X + 1];
+	const float H01 = VertexHeights[(Y + 1) * V + X];
+	const float H11 = VertexHeights[(Y + 1) * V + X + 1];
+	return FX >= FY
+		? H00 + FX * (H10 - H00) + FY * (H11 - H10)
+		: H00 + FY * (H01 - H00) + FX * (H11 - H01);
+}
+
+float AOpenWorldGenerator::TileSurface(int32 X, int32 Y) const
+{
+	const FVector C = TileCenter(X, Y);
+	return SurfaceZ(C.X, C.Y);
+}
+
+void AOpenWorldGenerator::BuildSmoothTerrain()
+{
+	const int32 V = GridSize + 1;
+	const float Half = GetHalfExtent();
+
+	// corner heights: average of the tiles touching each corner
+	VertexHeights.SetNumZeroed(V * V);
+	TArray<FLinearColor> Colors;
+	Colors.SetNumZeroed(V * V);
+	for (int32 VY = 0; VY < V; ++VY)
+	{
+		for (int32 VX = 0; VX < V; ++VX)
+		{
+			float Sum = 0.f;
+			FLinearColor ColorSum(0.f, 0.f, 0.f, 0.f);
+			int32 Count = 0;
+			for (int32 TY = VY - 1; TY <= VY; ++TY)
+			{
+				for (int32 TX = VX - 1; TX <= VX; ++TX)
+				{
+					if (TX >= 0 && TY >= 0 && TX < GridSize && TY < GridSize)
+					{
+						Sum += TileTop(TX, TY);
+						ColorSum += FLinearColor::FromSRGBColor(BiomeColor(Biomes[Index(TX, TY)]));
+						++Count;
+					}
+				}
+			}
+			VertexHeights[VY * V + VX] = Sum / Count;
+			Colors[VY * V + VX] = ColorSum / float(Count);
+		}
+	}
+
+	// gaussian-ish blur to round off the remaining terraces
+	TArray<float> Temp;
+	for (int32 Pass = 0; Pass < SmoothPasses; ++Pass)
+	{
+		Temp = VertexHeights;
+		for (int32 VY = 0; VY < V; ++VY)
+		{
+			for (int32 VX = 0; VX < V; ++VX)
+			{
+				float Sum = 0.f, Weight = 0.f;
+				for (int32 DY = -1; DY <= 1; ++DY)
+				{
+					for (int32 DX = -1; DX <= 1; ++DX)
+					{
+						const int32 NX = VX + DX, NY = VY + DY;
+						if (NX >= 0 && NY >= 0 && NX < V && NY < V)
+						{
+							const float W = (DX == 0 ? 2.f : 1.f) * (DY == 0 ? 2.f : 1.f);
+							Sum += Temp[NY * V + NX] * W;
+							Weight += W;
+						}
+					}
+				}
+				VertexHeights[VY * V + VX] = Sum / Weight;
+			}
+		}
+	}
+
+	auto H = [&](int32 VX, int32 VY)
+	{
+		return VertexHeights[FMath::Clamp(VY, 0, V - 1) * V + FMath::Clamp(VX, 0, V - 1)];
+	};
+
+	TArray<FVector> Vertices;
+	TArray<FVector> Normals;
+	TArray<FVector2D> UVs;
+	TArray<FColor> VertexColors;
+	Vertices.Reserve(V * V);
+	Normals.Reserve(V * V);
+	UVs.Reserve(V * V);
+	VertexColors.Reserve(V * V);
+
+	for (int32 VY = 0; VY < V; ++VY)
+	{
+		for (int32 VX = 0; VX < V; ++VX)
+		{
+			Vertices.Add(FVector(VX * TileSize - Half, VY * TileSize - Half, H(VX, VY)));
+
+			// smooth normal from central differences
+			const float DZDX = (H(VX + 1, VY) - H(VX - 1, VY)) / (2.f * TileSize);
+			const float DZDY = (H(VX, VY + 1) - H(VX, VY - 1)) / (2.f * TileSize);
+			Normals.Add(FVector(-DZDX, -DZDY, 1.f).GetSafeNormal());
+
+			UVs.Add(FVector2D(VX, VY));
+			// the material reads vertex colour as linear, so store linear values
+			VertexColors.Add(Colors[VY * V + VX].ToFColor(false));
+		}
+	}
+
+	TArray<int32> Triangles;
+	Triangles.Reserve(GridSize * GridSize * 6);
+	for (int32 Y = 0; Y < GridSize; ++Y)
+	{
+		for (int32 X = 0; X < GridSize; ++X)
+		{
+			const int32 V00 = Y * V + X;
+			const int32 V10 = V00 + 1;
+			const int32 V01 = V00 + V;
+			const int32 V11 = V01 + 1;
+			// split along V00-V11 (matches SurfaceZ)
+			Triangles.Append({ V00, V11, V10 });
+			Triangles.Append({ V00, V01, V11 });
+		}
+	}
+
+	TerrainMesh = NewObject<UProceduralMeshComponent>(this, TEXT("SmoothTerrain"));
+	TerrainMesh->SetupAttachment(Root);
+	TerrainMesh->bUseAsyncCooking = false;
+	TerrainMesh->RegisterComponent();
+	TerrainMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, VertexColors, TArray<FProcMeshTangent>(), true);
+	TerrainMesh->SetMaterial(0, TerrainMaterial);
+	TerrainMesh->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+	AddInstanceComponent(TerrainMesh);
 }
 
 float AOpenWorldGenerator::Fbm(float X, float Y, int32 Octaves, int32 OffsetIndex) const
@@ -125,7 +292,15 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	}
 
 	BuildHeights(Stream);
-	BuildTerrain();
+	if (TerrainStyle == EOpenWorldTerrainStyle::Smooth && TerrainMaterial)
+	{
+		BuildSmoothTerrain();
+	}
+	else
+	{
+		TerrainStyle = EOpenWorldTerrainStyle::Blocky;
+		BuildTerrain();
+	}
 	PickSpawnAndCrystals(Stream);
 	BuildDecorations(Stream);
 	BuildClouds(Stream);
@@ -333,7 +508,7 @@ void AOpenWorldGenerator::PickSpawnAndCrystals(FRandomStream& Stream)
 	}
 	const FIntPoint SpawnTile = Central.Num() > 0 ? Central[Stream.RandRange(0, Central.Num() - 1)] : Best;
 	SpawnLocation = TileCenter(SpawnTile.X, SpawnTile.Y);
-	SpawnLocation.Z = TileTop(SpawnTile.X, SpawnTile.Y) + 120.f;
+	SpawnLocation.Z = TileSurface(SpawnTile.X, SpawnTile.Y) + 120.f;
 
 	// keep the spawn area clear of trees
 	for (int32 DY = -2; DY <= 2; ++DY)
@@ -416,7 +591,7 @@ void AOpenWorldGenerator::PickSpawnAndCrystals(FRandomStream& Stream)
 	{
 		ReservedTiles.Add(Index(C.X, C.Y));
 		FVector Loc = TileCenter(C.X, C.Y);
-		Loc.Z = TileTop(C.X, C.Y) + 110.f;
+		Loc.Z = TileSurface(C.X, C.Y) + 110.f;
 		if (AOpenWorldCrystal* Crystal = GetWorld()->SpawnActor<AOpenWorldCrystal>(AOpenWorldCrystal::StaticClass(), Loc, FRotator::ZeroRotator))
 		{
 			Crystals.Add(Crystal);
@@ -437,8 +612,14 @@ void AOpenWorldGenerator::BuildDecorations(FRandomStream& Stream)
 			}
 
 			const EOpenWorldBiome B = Biomes[I];
-			const float Top = TileTop(X, Y);
 			const FVector Center = TileCenter(X, Y);
+			// ground point at an offset (in tiles) from the tile centre
+			auto Ground = [this, &Center](float OffX, float OffY)
+			{
+				const float WX = Center.X + OffX * TileSize;
+				const float WY = Center.Y + OffY * TileSize;
+				return FVector(WX, WY, SurfaceZ(WX, WY));
+			};
 			const float Alt = float(Heights[I] - WaterLevel) / float(MaxSteps - WaterLevel);
 
 			// trees
@@ -446,7 +627,10 @@ void AOpenWorldGenerator::BuildDecorations(FRandomStream& Stream)
 			if (Stream.FRand() < TreeChance)
 			{
 				HasTree[I] = true;
-				const FVector Base = Center + FVector(Stream.FRandRange(-0.25f, 0.25f) * TileSize, Stream.FRandRange(-0.25f, 0.25f) * TileSize, Top);
+				const float OffX = Stream.FRandRange(-0.25f, 0.25f);
+				const float OffY = Stream.FRandRange(-0.25f, 0.25f);
+				// sink slightly so trunks never float on slopes
+				const FVector Base = Ground(OffX, OffY) - FVector(0.f, 0.f, 10.f);
 				const float Yaw = Stream.FRandRange(0.f, 90.f);
 				const bool bPine = Alt > 0.3f || Stream.FRand() < 0.25f;
 
@@ -484,7 +668,9 @@ void AOpenWorldGenerator::BuildDecorations(FRandomStream& Stream)
 			if (Stream.FRand() < RockChance)
 			{
 				const float S = Stream.FRandRange(0.7f, 1.8f);
-				const FVector Pos = Center + FVector(Stream.FRandRange(-0.2f, 0.2f) * TileSize, Stream.FRandRange(-0.2f, 0.2f) * TileSize, Top + S * 30.f);
+				const float OffX = Stream.FRandRange(-0.2f, 0.2f);
+				const float OffY = Stream.FRandRange(-0.2f, 0.2f);
+				const FVector Pos = Ground(OffX, OffY) + FVector(0.f, 0.f, S * 30.f);
 				const FRotator Rot(Stream.FRandRange(-20.f, 20.f), Stream.FRandRange(0.f, 90.f), Stream.FRandRange(-20.f, 20.f));
 				Layer("Boulder", CubeMesh, OpenWorldColors::Boulder, true).Instances.Add(
 					FTransform(Rot, Pos, FVector(S * Stream.FRandRange(0.9f, 1.4f), S, S * 0.8f)));
@@ -498,7 +684,9 @@ void AOpenWorldGenerator::BuildDecorations(FRandomStream& Stream)
 				const int32 Count = Stream.RandRange(3, 6);
 				for (int32 F = 0; F < Count; ++F)
 				{
-					const FVector Pos = Center + FVector(Stream.FRandRange(-0.4f, 0.4f) * TileSize, Stream.FRandRange(-0.4f, 0.4f) * TileSize, Top + 8.f);
+					const float OffX = Stream.FRandRange(-0.4f, 0.4f);
+					const float OffY = Stream.FRandRange(-0.4f, 0.4f);
+					const FVector Pos = Ground(OffX, OffY) + FVector(0.f, 0.f, 8.f);
 					Layer(bRed ? "FlowerRed" : "FlowerYellow", CubeMesh, bRed ? OpenWorldColors::FlowerRed : OpenWorldColors::FlowerYellow, false, false).Instances.Add(
 						FTransform(FRotator(0, Stream.FRandRange(0.f, 90.f), 0), Pos, FVector(0.14f)));
 				}

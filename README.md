@@ -28,19 +28,28 @@ Each time you start the game, you get a new island built from instanced cubes. T
 | `Space` | Jump |
 | `R` | Return to the starting point |
 | `N` | Generate a brand-new world |
+| `T` | Switch between smooth and blocky terrain (same world) |
 
-To replay a specific island, open the map with a seed, for example `?Seed=1234` in the map URL.
+To replay a specific island, open the map with a seed, for example `?Seed=1234` in the map URL. `?Style=Blocky` or `?Style=Smooth` picks the terrain style. In the editor, the console variables `OpenWorld.Seed <n>` and `OpenWorld.TerrainStyle <0|1>` (0 = Blocky, 1 = Smooth, -1 = default) force the seed or style for the next Play or Simulate session.
+
+### Terrain styles
+
+| Smooth (default) | Blocky |
+|---|---|
+| One continuous procedural mesh. Each corner's height is the average of the tiles around it, then blurred. The mesh has smooth normals, and its vertex colours blend biomes into soft gradients. | One instanced cube column per tile, giving a stepped voxel look with hard biome edges. |
+
+Both styles come from the same height map, so trees, rocks, crystals and the spawn point stay in the same places when you switch. Only the ground surface changes, and objects are placed on whichever surface is active.
 
 ### How it works
 
 | Class | Responsibility |
 |---|---|
-| [`AOpenWorldGenerator`](Source/MyProject/Variant_OpenWorld/OpenWorldGenerator.h) | Builds the height map with fractal Perlin noise plus an island falloff, limits slopes, assigns biomes, places the spawn point and crystals (using a search for tiles the player can reach), scatters decoration into instanced mesh layers, and creates the minimap texture |
+| [`AOpenWorldGenerator`](Source/MyProject/Variant_OpenWorld/OpenWorldGenerator.h) | Builds the height map with fractal Perlin noise plus an island falloff, limits slopes, assigns biomes, builds the terrain (a smooth procedural mesh or blocky instanced cubes), places the spawn point and crystals (using a search for tiles the player can reach), scatters decoration into instanced mesh layers, and creates the minimap texture |
 | [`AOpenWorldCrystal`](Source/MyProject/Variant_OpenWorld/OpenWorldCrystal.h) | Spinning, glowing collectible with a light beam |
 | [`AOpenWorldGameMode`](Source/MyProject/Variant_OpenWorld/OpenWorldGameMode.h) | Chooses the seed, generates the world, spawns sky and lighting when the level has none, tracks the objective, and handles deep-water resets and the `R`/`N` keys |
 | [`AOpenWorldHUD`](Source/MyProject/Variant_OpenWorld/OpenWorldHUD.h) | HUD drawn on the canvas: counter, timer, seed, nearest-crystal hint and minimap |
 
-All visuals use engine basic shapes (`/Engine/BasicShapes`) with colour-tinted material instances, so the game needs no extra art assets. The player character and input come from the template's `BP_ThirdPersonCharacter` and `BP_ThirdPersonPlayerController`.
+All visuals use engine basic shapes (`/Engine/BasicShapes`) with colour-tinted material instances. The only exception is the smooth terrain, which uses a small vertex-colour material (`M_TerrainVertexColor`) and the `ProceduralMeshComponent` plugin. The game needs no other art assets. The player character and input come from the template's `BP_ThirdPersonCharacter` and `BP_ThirdPersonPlayerController`.
 
 ## Other template variants
 
@@ -81,7 +90,7 @@ You can also right-click `MyProject.uproject`, choose **Generate Visual Studio p
 
 ```
 Config/                       Project settings (startup map, game mode, asset manager)
-Content/Variant_OpenWorld/    Lvl_OpenWorld map
+Content/Variant_OpenWorld/    Lvl_OpenWorld map, M_TerrainVertexColor material
 Content/...                   Template characters, input and variant levels
 Source/MyProject/
   Variant_OpenWorld/          Open-world island game (generator, crystal, game mode, HUD)
