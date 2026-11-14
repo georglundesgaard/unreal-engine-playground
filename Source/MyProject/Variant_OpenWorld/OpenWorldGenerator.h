@@ -55,6 +55,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="World")
 	int32 MaxSteps = 50;
 
+	/** Max height difference (in steps) between neighbouring land tiles; 2 steps = 80cm, within the character's jump */
+	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=1))
+	int32 MaxClimbSteps = 2;
+
 	/** Terrain step that sits just under the water surface */
 	UPROPERTY(EditAnywhere, Category="World")
 	int32 WaterLevel = 8;
@@ -74,7 +78,6 @@ public:
 	/** Builds the world for the given seed. Safe to call only once. */
 	void Generate(int32 InSeed);
 
-	bool IsGenerated() const { return bGenerated; }
 	int32 GetSeed() const { return Seed; }
 	FVector GetSpawnLocation() const { return SpawnLocation; }
 	float GetWaterSurfaceZ() const { return WaterLevel * StepHeight + StepHeight * 0.6f; }
@@ -146,7 +149,6 @@ private:
 	TArray<EOpenWorldBiome> Biomes;
 	TArray<bool> HasTree;
 	TSet<int32> ReservedTiles;
-	TArray<FIntPoint> CrystalTiles;
 
 	FVector SpawnLocation = FVector::ZeroVector;
 	int32 Seed = 0;

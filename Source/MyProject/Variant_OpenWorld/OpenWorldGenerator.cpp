@@ -105,6 +105,13 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	bGenerated = true;
 	Seed = InSeed;
 
+	// guard against editor values that would break the height mapping
+	GridSize = FMath::Clamp(GridSize, 16, 256);
+	WaterLevel = FMath::Max(WaterLevel, 1);
+	MaxSteps = FMath::Max(MaxSteps, WaterLevel + 4);
+	MaxClimbSteps = FMath::Max(MaxClimbSteps, 1);
+	NumCrystals = FMath::Max(NumCrystals, 1);
+
 	// the terrain never moves: static root so static instance layers can attach to it
 	Root->SetMobility(EComponentMobility::Static);
 	Water->SetMobility(EComponentMobility::Movable);
@@ -196,6 +203,52 @@ void AOpenWorldGenerator::BuildHeights(FRandomStream& Stream)
 				Steps = WaterLevel + 1 + FMath::RoundToInt(T * (MaxSteps - WaterLevel - 1));
 			}
 			Heights[I] = Steps;
+		}
+	}
+
+	// limit land slopes so every cliff can be jumped: no land tile may be more than
+	// MaxClimbSteps above a land neighbour (only lowers tiles, so it always converges)
+	for (int32 Pass = 0; Pass < 256; ++Pass)
+	{
+		bool bChanged = false;
+		for (int32 Y = 0; Y < GridSize; ++Y)
+		{
+			for (int32 X = 0; X < GridSize; ++X)
+			{
+				const int32 I = Index(X, Y);
+				if (Heights[I] <= WaterLevel)
+				{
+					continue;
+				}
+				const FIntPoint Dirs[4] = { {1,0}, {-1,0}, {0,1}, {0,-1} };
+				for (const FIntPoint& D : Dirs)
+				{
+					const int32 NX = X + D.X, NY = Y + D.Y;
+					if (NX < 0 || NY < 0 || NX >= GridSize || NY >= GridSize)
+					{
+						continue;
+					}
+					const int32 N = Heights[Index(NX, NY)];
+					if (N > WaterLevel && Heights[I] > N + MaxClimbSteps)
+					{
+						Heights[I] = N + MaxClimbSteps;
+						bChanged = true;
+					}
+				}
+			}
+		}
+		if (!bChanged)
+		{
+			break;
+		}
+	}
+
+	for (int32 Y = 0; Y < GridSize; ++Y)
+	{
+		for (int32 X = 0; X < GridSize; ++X)
+		{
+			const int32 I = Index(X, Y);
+			const int32 Steps = Heights[I];
 
 			// biome from altitude + moisture
 			const float Moisture = Fbm(X * NoiseScale * 1.8f, Y * NoiseScale * 1.8f, 3, 10);
@@ -291,18 +344,39 @@ void AOpenWorldGenerator::PickSpawnAndCrystals(FRandomStream& Stream)
 		}
 	}
 
-	// crystals: spread out over the island, away from the spawn
+	// crystals: only on land the player can walk/jump to from the spawn,
+	// spread out over the island and away from the spawn
 	TArray<FIntPoint> Candidates;
-	for (int32 Y = 0; Y < GridSize; ++Y)
+	TArray<bool> Reachable;
+	Reachable.Init(false, GridSize * GridSize);
+	TArray<FIntPoint> Queue;
+	Queue.Add(SpawnTile);
+	Reachable[Index(SpawnTile.X, SpawnTile.Y)] = true;
+	for (int32 Head = 0; Head < Queue.Num(); ++Head)
 	{
-		for (int32 X = 0; X < GridSize; ++X)
+		const FIntPoint Cur = Queue[Head];
+		if (Biomes[Index(Cur.X, Cur.Y)] != EOpenWorldBiome::Sand)
 		{
-			if (IsLand(X, Y) && Biomes[Index(X, Y)] != EOpenWorldBiome::Sand)
+			Candidates.Add(Cur);
+		}
+		const FIntPoint Dirs[4] = { {1,0}, {-1,0}, {0,1}, {0,-1} };
+		for (const FIntPoint& D : Dirs)
+		{
+			const FIntPoint N = Cur + D;
+			if (N.X < 0 || N.Y < 0 || N.X >= GridSize || N.Y >= GridSize)
 			{
-				Candidates.Add(FIntPoint(X, Y));
+				continue;
+			}
+			const int32 NI = Index(N.X, N.Y);
+			if (!Reachable[NI] && IsLand(N.X, N.Y) && Heights[NI] - Heights[Index(Cur.X, Cur.Y)] <= MaxClimbSteps)
+			{
+				Reachable[NI] = true;
+				Queue.Add(N);
 			}
 		}
 	}
+
+	TArray<FIntPoint> CrystalTiles;
 	for (int32 i = Candidates.Num() - 1; i > 0; --i)
 	{
 		Candidates.Swap(i, Stream.RandRange(0, i));

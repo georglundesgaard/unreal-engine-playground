@@ -148,6 +148,14 @@ void AOpenWorldGameMode::StartPlay()
 	Super::StartPlay();
 
 	StartTime = GetWorld()->GetTimeSeconds();
+	if (Total == 0)
+	{
+		// nothing could be placed (e.g. a tiny island): don't leave the player stuck
+		bWon = true;
+		FinishTime = StartTime;
+		ShowMessage(TEXT("This island has no crystals. Press N for a new world."), 1.0e6f);
+		return;
+	}
 	ShowMessage(FString::Printf(TEXT("Find all %d crystals! Follow the light beams."), Total), 6.f);
 }
 
@@ -186,9 +194,12 @@ void AOpenWorldGameMode::Tick(float DeltaSeconds)
 	}
 
 	// deep water: put the player back on the last dry ground they stood on
+	// work with the feet position so this holds for any capsule size
 	const float WaterZ = Generator->GetWaterSurfaceZ();
 	const FVector Loc = Pawn->GetActorLocation();
-	if (Loc.Z < WaterZ - 40.f)
+	const float HalfHeight = Pawn->GetSimpleCollisionHalfHeight();
+	const float FeetZ = Loc.Z - HalfHeight;
+	if (FeetZ < WaterZ - 140.f)
 	{
 		TeleportPawn(LastSafeLocation + FVector(0.f, 0.f, 40.f));
 		ShowMessage(TEXT("Splash! The water is too deep."), 2.f);
@@ -199,7 +210,7 @@ void AOpenWorldGameMode::Tick(float DeltaSeconds)
 	if (SafeSampleTimer <= 0.f)
 	{
 		SafeSampleTimer = 0.5f;
-		if (Character && Character->GetCharacterMovement()->IsMovingOnGround() && Loc.Z > WaterZ + 100.f)
+		if (Character && Character->GetCharacterMovement()->IsMovingOnGround() && FeetZ > WaterZ)
 		{
 			LastSafeLocation = Loc;
 		}
@@ -229,8 +240,10 @@ void AOpenWorldGameMode::OnCrystalCollected(AOpenWorldCrystal* Crystal)
 
 void AOpenWorldGameMode::NewWorld()
 {
+	// pass an explicit fresh seed so this is a new world even when FixedSeed is set
+	const int32 NewSeed = int32((FDateTime::Now().GetTicks() ^ FPlatformTime::Cycles64()) % 999983) + 1;
 	const FString LevelPath = UWorld::RemovePIEPrefix(GetWorld()->GetOutermost()->GetName());
-	UGameplayStatics::OpenLevel(this, FName(*LevelPath), true);
+	UGameplayStatics::OpenLevel(this, FName(*LevelPath), true, FString::Printf(TEXT("Seed=%d"), NewSeed));
 }
 
 float AOpenWorldGameMode::GetElapsedTime() const
