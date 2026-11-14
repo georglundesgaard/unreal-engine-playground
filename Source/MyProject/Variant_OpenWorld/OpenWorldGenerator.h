@@ -90,6 +90,14 @@ public:
 	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=0, ClampMax=8))
 	int32 SmoothPasses = 2;
 
+	/** Smooth terrain: vertical stretch of everything above the water line (1 = same as blocky). Keeps slopes walkable up to 4. */
+	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=1, ClampMax=4))
+	float HillScale = 2.6f;
+
+	/** Smooth terrain: amplitude (cm) of small-scale bumps added to land, fading out towards the coast */
+	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=0, ClampMax=200))
+	float DetailNoise = 70.f;
+
 	/** Number of crystals to collect */
 	UPROPERTY(EditAnywhere, Category="Gameplay")
 	int32 NumCrystals = 8;
@@ -123,6 +131,12 @@ protected:
 	TObjectPtr<UStaticMesh> ConeMesh;
 
 	UPROPERTY()
+	TObjectPtr<UStaticMesh> SphereMesh;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> CylinderMesh;
+
+	UPROPERTY()
 	TObjectPtr<UMaterialInterface> BaseMaterial;
 
 	/** Material that renders vertex colours (used by the smooth terrain) */
@@ -151,10 +165,12 @@ private:
 		bool bCollision = true;
 		bool bShadows = true;
 		float Roughness = 0.8f;
+		/** Instances beyond this distance (cm) are culled; 0 = never */
+		float CullDistance = 0.f;
 		TArray<FTransform> Instances;
 	};
 
-	FLayerBuild& Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows = true, float Roughness = 0.85f);
+	FLayerBuild& Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows = true, float Roughness = 0.85f, float CullDistance = 0.f);
 	void FlushLayers();
 
 	float Fbm(float X, float Y, int32 Octaves, int32 OffsetIndex) const;
@@ -173,7 +189,10 @@ private:
 	void BuildTerrain();
 	void BuildSmoothTerrain();
 	void PickSpawnAndCrystals(FRandomStream& Stream);
+	/** Simple cube-based props, used with the blocky terrain */
 	void BuildDecorations(FRandomStream& Stream);
+	/** Detailed vegetation and props built from cylinders, spheres and cones, used with the smooth terrain */
+	void BuildDetailedDecorations(FRandomStream& Stream);
 	void BuildClouds(FRandomStream& Stream);
 	void BuildMapTexture();
 

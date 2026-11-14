@@ -36,9 +36,10 @@ To replay a specific island, open the map with a seed, for example `?Seed=1234` 
 
 | Smooth (default) | Blocky |
 |---|---|
-| One continuous procedural mesh. Each corner's height is the average of the tiles around it, then blurred. The mesh has smooth normals, and its vertex colours blend biomes into soft gradients. | One instanced cube column per tile, giving a stepped voxel look with hard biome edges. |
+| One continuous procedural mesh. Each corner's height is the average of the tiles around it, then blurred. Heights above the water line are then stretched (`HillScale`), which gives tall hills without moving the coastline, and small surface bumps are added (`DetailNoise`). The mesh has smooth normals, and its vertex colours blend biomes into soft gradients. | One instanced cube column per tile, giving a stepped voxel look with hard biome edges. |
+| **Detailed props:** oaks (root flare, branches, clustered crowns, some in autumn colours), white birches, layered pines that get snow caps high up, bushes with berries, grass tufts, flowers on stems, mushrooms, fallen logs and stumps, boulder clusters with pebbles, reeds and cattails along the shore, and fluffy sphere clouds. Small props are not drawn beyond 70 m. | **Simple props:** cube trees, cone pines, cube boulders and flowers, and box clouds. |
 
-Both styles come from the same height map, so trees, rocks, crystals and the spawn point stay in the same places when you switch. Only the ground surface changes, and objects are placed on whichever surface is active.
+Both styles come from the same height map, so crystals and the spawn point stay in the same places when you switch. Vegetation is generated in each style's own look. Everything is placed on whichever ground surface is active.
 
 ### How it works
 
