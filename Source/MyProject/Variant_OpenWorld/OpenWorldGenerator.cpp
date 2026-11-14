@@ -46,8 +46,6 @@ AOpenWorldGenerator::AOpenWorldGenerator()
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> ConeFinder(TEXT("/Engine/BasicShapes/Cone.Cone"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MaterialFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 
@@ -56,9 +54,14 @@ AOpenWorldGenerator::AOpenWorldGenerator()
 	SphereMesh = SphereFinder.Object;
 	CylinderMesh = CylinderFinder.Object;
 
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MaterialFinder(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	BaseMaterial = MaterialFinder.Object;
+
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> TerrainMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_TerrainVertexColor.M_TerrainVertexColor"));
 	TerrainMaterial = TerrainMaterialFinder.Object;
-	BaseMaterial = MaterialFinder.Object;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> CloudMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_Cloud.M_Cloud"));
+	CloudMaterial = CloudMaterialFinder.Object;
 
 	Water->SetStaticMesh(CubeMesh);
 }
@@ -287,7 +290,7 @@ float AOpenWorldGenerator::Fbm(float X, float Y, int32 Octaves, int32 OffsetInde
 	return Sum / Norm;
 }
 
-AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows, float Roughness, float CullDistance)
+AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows, float Roughness, float CullDistance, UMaterialInterface* Material)
 {
 	FLayerBuild* Found = PendingLayers.Find(Name);
 	if (!Found)
@@ -299,6 +302,7 @@ AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStatic
 		Found->bShadows = bShadows;
 		Found->Roughness = Roughness;
 		Found->CullDistance = CullDistance;
+		Found->Material = Material;
 	}
 	return *Found;
 }
@@ -324,6 +328,16 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	// the terrain never moves: static root so static instance layers can attach to it
 	Root->SetMobility(EComponentMobility::Static);
 	Water->SetMobility(EComponentMobility::Movable);
+
+	// missing content (e.g. a clone without `git lfs pull`) degrades the look: say so instead of failing silently
+	if (!TerrainMaterial)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenWorldGenerator: M_TerrainVertexColor not found, falling back to blocky terrain. Run 'git lfs pull'?"));
+	}
+	if (!CloudMaterial)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenWorldGenerator: M_Cloud not found, clouds use BasicShapeMaterial (dark undersides). Run 'git lfs pull'?"));
+	}
 
 	FRandomStream Stream(Seed);
 
@@ -1101,7 +1115,7 @@ void AOpenWorldGenerator::BuildClouds(FRandomStream& Stream)
 			{
 				const float R = Stream.FRandRange(250.f, 450.f) * Size;
 				const FVector Pos = Base + FVector(Stream.FRandRange(-700.f, 700.f) * Size, Stream.FRandRange(-400.f, 400.f) * Size, Stream.FRandRange(0.f, 0.5f) * R);
-				Layer("CloudPuff", SphereMesh, OpenWorldColors::Cloud, false, false, 1.f).Instances.Add(
+				Layer("CloudPuff", SphereMesh, OpenWorldColors::Cloud, false, false, 1.f, 0.f, CloudMaterial).Instances.Add(
 					FTransform(FRotator::ZeroRotator, Pos, FVector(R / 50.f, R / 50.f, R / 50.f * 0.6f)));
 			}
 		}
@@ -1115,7 +1129,7 @@ void AOpenWorldGenerator::BuildClouds(FRandomStream& Stream)
 		for (int32 P = 0; P < Puffs; ++P)
 		{
 			const FVector Pos = Base + FVector(Stream.FRandRange(-600.f, 600.f), Stream.FRandRange(-400.f, 400.f), Stream.FRandRange(-60.f, 60.f));
-			Layer("Cloud", CubeMesh, OpenWorldColors::Cloud, false, false, 1.f).Instances.Add(
+			Layer("Cloud", CubeMesh, OpenWorldColors::Cloud, false, false, 1.f, 0.f, CloudMaterial).Instances.Add(
 				FTransform(FRotator::ZeroRotator, Pos, FVector(Stream.FRandRange(6.f, 12.f), Stream.FRandRange(4.f, 8.f), Stream.FRandRange(1.2f, 2.2f))));
 		}
 	}
@@ -1151,11 +1165,18 @@ void AOpenWorldGenerator::FlushLayers()
 			ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		}
 
-		if (BaseMaterial)
+		if (UMaterialInterface* Parent = L.Material.IsValid() ? L.Material.Get() : BaseMaterial.Get())
 		{
-			UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(Parent, this);
 			Mat->SetVectorParameterValue(TEXT("Color"), L.Color);
 			Mat->SetScalarParameterValue(TEXT("Roughness"), L.Roughness);
+
+			// materials with a glow (M_Cloud) tint it by the layer colour, so a coloured layer glows the same colour
+			FLinearColor GlowColor;
+			if (Parent->GetVectorParameterValue(FHashedMaterialParameterInfo(TEXT("GlowColor")), GlowColor))
+			{
+				Mat->SetVectorParameterValue(TEXT("GlowColor"), GlowColor * L.Color);
+			}
 			ISM->SetMaterial(0, Mat);
 		}
 

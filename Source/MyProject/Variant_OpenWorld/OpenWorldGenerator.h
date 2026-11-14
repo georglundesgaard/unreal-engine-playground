@@ -143,6 +143,10 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> TerrainMaterial;
 
+	/** Material for clouds: lit, with a soft emissive glow so undersides facing away from the sun don't go dark */
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> CloudMaterial;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UProceduralMeshComponent> TerrainMesh;
 
@@ -167,10 +171,18 @@ private:
 		float Roughness = 0.8f;
 		/** Instances beyond this distance (cm) are culled; 0 = never */
 		float CullDistance = 0.f;
+		/**
+		 *  Parent material for this layer; BasicShapeMaterial when unset. Should expose a "Color" parameter.
+		 *  Weak because this struct is invisible to the GC: if the material were ever collected the layer
+		 *  falls back to BasicShapeMaterial instead of dereferencing a dangling pointer.
+		 */
+		TWeakObjectPtr<UMaterialInterface> Material;
 		TArray<FTransform> Instances;
 	};
 
-	FLayerBuild& Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows = true, float Roughness = 0.85f, float CullDistance = 0.f);
+	/** Finds or creates a layer. Like every other setting, Material is fixed by the call that creates the layer. */
+	FLayerBuild& Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows = true, float Roughness = 0.85f,
+		float CullDistance = 0.f, UMaterialInterface* Material = nullptr);
 	void FlushLayers();
 
 	float Fbm(float X, float Y, int32 Octaves, int32 OffsetIndex) const;
