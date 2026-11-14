@@ -1,0 +1,32 @@
+# Unreal generated / build output
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# IDE / generated project files
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Compiled artifacts
+*.pdb
+*.dll
+*.exe
+*.lib
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS
+Thumbs.db
+.DS_Store
