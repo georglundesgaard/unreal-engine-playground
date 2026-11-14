@@ -200,7 +200,8 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 			{
 				const float Above = Hgt - WaterZ;
 				const float Fade = FMath::Clamp(Above / 300.f, 0.f, 1.f);
-				const float Bumps = Fbm(VX * 0.15f, VY * 0.15f, 3, 12) * DetailNoise * Fade;
+				// never dig deeper than half the stretched height, so bumps can't sink land
+				const float Bumps = FMath::Max(Fbm(VX * 0.15f, VY * 0.15f, 3, 12) * DetailNoise * Fade, -Above * HillScale * 0.5f);
 				Hgt = WaterZ + Above * HillScale + Bumps;
 			}
 		}
@@ -208,7 +209,7 @@ void AOpenWorldGenerator::BuildSmoothTerrain()
 
 	// averaging drags coastal land towards the seabed: keep every corner that touches
 	// a land tile above the water, so all land the game treats as dry stays dry
-	const float MinLandZ = GetWaterSurfaceZ() + 12.f;
+	const float MinLandZ = WaterZ + 12.f;
 	for (int32 I = 0; I < V * V; ++I)
 	{
 		if (TouchesLand[I])
@@ -318,7 +319,7 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	MaxClimbSteps = FMath::Max(MaxClimbSteps, 1);
 	NumCrystals = FMath::Max(NumCrystals, 1);
 	HillScale = FMath::Clamp(HillScale, 1.f, 4.f);
-	DetailNoise = FMath::Max(DetailNoise, 0.f);
+	DetailNoise = FMath::Clamp(DetailNoise, 0.f, 200.f);
 
 	// the terrain never moves: static root so static instance layers can attach to it
 	Root->SetMobility(EComponentMobility::Static);
@@ -763,7 +764,7 @@ void AOpenWorldGenerator::BuildDetailedDecorations(FRandomStream& Stream)
 	const FColor RockColors[3] = { FColor(138, 134, 128), FColor(116, 112, 108), FColor(158, 152, 144) };
 	const FColor Reed(170, 162, 98), Cattail(96, 64, 40);
 
-	// small props are culled by distance; trees, rocks and logs are always drawn
+	// small props are culled by distance; trees and main boulders are always drawn
 	constexpr float NearCull = 7000.f;
 	constexpr float MidCull = 14000.f;
 
@@ -898,20 +899,42 @@ void AOpenWorldGenerator::BuildDetailedDecorations(FRandomStream& Stream)
 				continue;
 			}
 
+			// ground point clamped to this tile, so props never spill onto neighbouring tiles
+			// (crystal tiles, the spawn area or the shore)
+			const float TileHalf = TileSize * 0.45f;
+			auto TileGround = [&](float WX, float WY)
+			{
+				return Ground(FMath::Clamp(WX, Center.X - TileHalf, Center.X + TileHalf), FMath::Clamp(WY, Center.Y - TileHalf, Center.Y + TileHalf));
+			};
+			// keep blocking props away from crystals and the spawn point
+			bool bNearReserved = false;
+			for (int32 DY = -1; DY <= 1 && !bNearReserved; ++DY)
+			{
+				for (int32 DX = -1; DX <= 1 && !bNearReserved; ++DX)
+				{
+					const int32 NX = X + DX, NY = Y + DY;
+					bNearReserved = NX >= 0 && NY >= 0 && NX < GridSize && NY < GridSize && ReservedTiles.Contains(Index(NX, NY));
+				}
+			}
+
 			// ---- rocks: a main boulder with smaller ones and pebbles around it ----
 			const float RockChance = B == EOpenWorldBiome::Rock ? 0.12f : (B == EOpenWorldBiome::Snow ? 0.05f : (B == EOpenWorldBiome::Sand ? 0.02f : 0.015f));
-			if (Stream.FRand() < RockChance)
+			if (!bNearReserved && Stream.FRand() < RockChance)
 			{
 				const FVector P = RandomGround(0.25f);
 				const float R = Stream.FRandRange(60.f, 150.f);
 				const int32 Count = Stream.RandRange(1, 3);
 				for (int32 K = 0; K < Count; ++K)
 				{
-					const float RR = K == 0 ? R : R * Stream.FRandRange(0.4f, 0.7f);
-					const FVector Pos = P + (K == 0 ? FVector::ZeroVector : FVector(Stream.FRandRange(-R, R), Stream.FRandRange(-R, R), 0.f)) + FVector(0.f, 0.f, RR * 0.25f);
+					const bool bMain = K == 0;
+					const float RR = bMain ? R : R * Stream.FRandRange(0.4f, 0.7f);
+					// every boulder sits on the ground under its own position
+					const FVector Spot = bMain ? P : TileGround(P.X + Stream.FRandRange(-R, R), P.Y + Stream.FRandRange(-R, R));
+					const FVector Pos = Spot + FVector(0.f, 0.f, RR * 0.25f);
 					const int32 Variant = Stream.RandRange(0, 2);
 					const FRotator Rot(Stream.FRandRange(-12.f, 12.f), Stream.FRandRange(0.f, 360.f), Stream.FRandRange(-12.f, 12.f));
-					Ball(FName(TEXT("Rock"), Variant + 1), RockColors[Variant], true, true, K == 0 ? 0.f : MidCull, Pos,
+					// main boulders are always drawn; the smaller ones live in their own culled layers
+					Ball(FName(bMain ? TEXT("Rock") : TEXT("RockSmall"), Variant + 1), RockColors[Variant], true, true, bMain ? 0.f : MidCull, Pos,
 						FVector(RR * Stream.FRandRange(1.f, 1.4f), RR, RR * Stream.FRandRange(0.55f, 0.8f)), Rot);
 					if (B == EOpenWorldBiome::Snow)
 					{
@@ -923,19 +946,27 @@ void AOpenWorldGenerator::BuildDetailedDecorations(FRandomStream& Stream)
 				{
 					const float PR = Stream.FRandRange(8.f, 18.f);
 					const int32 Variant = Stream.RandRange(0, 2);
-					const FVector Pos = Ground(P.X + Stream.FRandRange(-2.f, 2.f) * R, P.Y + Stream.FRandRange(-2.f, 2.f) * R);
+					const FVector Pos = TileGround(P.X + Stream.FRandRange(-1.5f, 1.5f) * R, P.Y + Stream.FRandRange(-1.5f, 1.5f) * R);
 					Ball(FName(TEXT("Pebble"), Variant + 1), RockColors[Variant], false, false, NearCull, Pos, FVector(PR * 1.3f, PR, PR * 0.6f), FRotator(0.f, Stream.FRandRange(0.f, 360.f), 0.f));
 				}
 			}
 
 			// ---- forest floor: fallen logs with a stump, and mushrooms ----
-			if (B == EOpenWorldBiome::Forest && Stream.FRand() < 0.012f)
+			if (B == EOpenWorldBiome::Forest && !bNearReserved && Stream.FRand() < 0.012f)
 			{
-				const FVector P = RandomGround(0.2f);
-				const float Len = Stream.FRandRange(250.f, 380.f);
-				const FRotator Lying(0.f, Stream.FRandRange(0.f, 360.f), 90.f);
-				Cyl("Log", Bark, true, true, MidCull, P + FVector(0.f, 0.f, 18.f), Lying, 22.f, Len);
-				const FVector StumpPos = RandomGround(0.35f);
+				// the log rests on the ground at both ends, so it follows the slope
+				const FVector2D Mid(Center.X + Stream.FRandRange(-0.15f, 0.15f) * TileSize, Center.Y + Stream.FRandRange(-0.15f, 0.15f) * TileSize);
+				const float Yaw = FMath::DegreesToRadians(Stream.FRandRange(0.f, 360.f));
+				const FVector2D Dir(FMath::Cos(Yaw), FMath::Sin(Yaw));
+				const float HalfLen = Stream.FRandRange(100.f, 150.f);
+				const FVector EndA = TileGround(Mid.X - Dir.X * HalfLen, Mid.Y - Dir.Y * HalfLen);
+				const FVector EndB = TileGround(Mid.X + Dir.X * HalfLen, Mid.Y + Dir.Y * HalfLen);
+				const FVector Axis = (EndB - EndA).GetSafeNormal();
+				const FRotator LogRot = FRotationMatrix::MakeFromZ(Axis).Rotator();
+				Cyl("Log", Bark, true, true, MidCull, (EndA + EndB) * 0.5f + FVector(0.f, 0.f, 18.f), LogRot, 22.f, FVector::Dist(EndA, EndB));
+
+				// the stump stands just past one end of the log
+				const FVector StumpPos = TileGround(EndA.X - Dir.X * 55.f, EndA.Y - Dir.Y * 55.f);
 				Cyl("Stump", Bark, true, true, MidCull, StumpPos + FVector(0.f, 0.f, 18.f), FRotator::ZeroRotator, 24.f, 40.f);
 				Cyl("StumpTop", StumpTop, false, false, NearCull, StumpPos + FVector(0.f, 0.f, 38.5f), FRotator::ZeroRotator, 20.f, 1.5f);
 			}
@@ -1052,10 +1083,18 @@ void AOpenWorldGenerator::BuildClouds(FRandomStream& Stream)
 
 	if (TerrainStyle == EOpenWorldTerrainStyle::Smooth)
 	{
+		// keep the cloud layer above the highest peak, whatever HillScale is
+		float HighestGround = 0.f;
+		for (const float H : VertexHeights)
+		{
+			HighestGround = FMath::Max(HighestGround, H);
+		}
+		const float CloudBase = FMath::Max(5200.f, HighestGround + 1500.f);
+
 		// fluffy clouds: a flat-bottomed cluster of overlapping spheres
 		for (int32 C = 0; C < 30; ++C)
 		{
-			const FVector Base(Stream.FRandRange(-Half, Half), Stream.FRandRange(-Half, Half), Stream.FRandRange(5200.f, 6400.f));
+			const FVector Base(Stream.FRandRange(-Half, Half), Stream.FRandRange(-Half, Half), Stream.FRandRange(CloudBase, CloudBase + 1200.f));
 			const float Size = Stream.FRandRange(0.8f, 1.4f);
 			const int32 Puffs = Stream.RandRange(5, 9);
 			for (int32 P = 0; P < Puffs; ++P)
@@ -1099,7 +1138,8 @@ void AOpenWorldGenerator::FlushLayers()
 		ISM->SetCastShadow(L.bShadows);
 		if (L.CullDistance > 0.f)
 		{
-			// small props fade out with distance to keep the instance count on screen low
+			// small props are culled (not drawn) beyond this distance to keep the on-screen instance count low;
+			// BasicShapeMaterial has no per-instance fade, so they pop rather than fade
 			ISM->SetCullDistances(int32(L.CullDistance * 0.8f), int32(L.CullDistance));
 		}
 		if (L.bCollision)

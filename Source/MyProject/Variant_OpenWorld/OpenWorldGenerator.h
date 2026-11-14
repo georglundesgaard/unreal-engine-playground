@@ -95,7 +95,7 @@ public:
 	float HillScale = 2.6f;
 
 	/** Smooth terrain: amplitude (cm) of small-scale bumps added to land, fading out towards the coast */
-	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=0))
+	UPROPERTY(EditAnywhere, Category="World", meta=(ClampMin=0, ClampMax=200))
 	float DetailNoise = 70.f;
 
 	/** Number of crystals to collect */
