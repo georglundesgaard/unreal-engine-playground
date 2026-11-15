@@ -4,6 +4,8 @@
 #include "OpenWorldGameMode.h"
 #include "OpenWorldGenerator.h"
 #include "OpenWorldCrystal.h"
+#include "OpenWorldAnimal.h"
+#include "OpenWorldBow.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -60,12 +62,27 @@ void AOpenWorldHUD::DrawHUD()
 
 	// objective panel
 	const int32 Secs = FMath::FloorToInt(GameMode->GetElapsedTime());
-	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.35f), Pad - 10.f * UIScale, Pad - 8.f * UIScale, 330.f * UIScale, 120.f * UIScale);
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.35f), Pad - 10.f * UIScale, Pad - 8.f * UIScale, 420.f * UIScale, 200.f * UIScale);
 	DrawShadowedText(FString::Printf(TEXT("Crystals  %d / %d"), GameMode->GetCollected(), GameMode->GetTotal()), Pad, Pad, CrystalBlue, Large, 1.4f * UIScale);
-	DrawShadowedText(FString::Printf(TEXT("Time  %d:%02d"), Secs / 60, Secs % 60), Pad, Pad + 44.f * UIScale, FLinearColor::White, Medium, 1.3f * UIScale);
+	const float Clock = GameMode->GetTimeOfDay();
+	const int32 ClockMinutes = FMath::FloorToInt(Clock * 60.f);
+	DrawShadowedText(FString::Printf(TEXT("Time  %d:%02d      Day %d  %02d:%02d %s"), Secs / 60, Secs % 60,
+		GameMode->GetDay(), ClockMinutes / 60, ClockMinutes % 60, GameMode->GetDaylight() > 0.5f ? TEXT("day") : TEXT("night")),
+		Pad, Pad + 44.f * UIScale, FLinearColor::White, Medium, 1.3f * UIScale);
 	const bool bSmooth = GameMode->GetGenerator()->GetTerrainStyle() == EOpenWorldTerrainStyle::Smooth;
 	DrawShadowedText(FString::Printf(TEXT("World seed  %d   Terrain  %s"), GameMode->GetGenerator()->GetSeed(), bSmooth ? TEXT("Smooth") : TEXT("Blocky")),
 		Pad, Pad + 78.f * UIScale, FLinearColor(0.8f, 0.8f, 0.8f), Small, 1.2f * UIScale);
+
+	// hunting log
+	const AOpenWorldBow* Bow = GameMode->GetBow();
+	DrawShadowedText(FString::Printf(TEXT("Hunt  deer %d  boar %d  rabbit %d   meat %.1f kg"),
+		GameMode->GetKills(EOpenWorldAnimalKind::Deer), GameMode->GetKills(EOpenWorldAnimalKind::Boar), GameMode->GetKills(EOpenWorldAnimalKind::Rabbit), GameMode->GetMeatKg()),
+		Pad, Pad + 108.f * UIScale, FLinearColor(0.95f, 0.75f, 0.5f), Small, 1.2f * UIScale);
+	if (Bow)
+	{
+		DrawShadowedText(FString::Printf(TEXT("Arrows  %d / %d"), Bow->GetArrows(), Bow->GetMaxArrows()),
+			Pad, Pad + 134.f * UIScale, Bow->GetArrows() > 0 ? FLinearColor(0.95f, 0.75f, 0.5f) : FLinearColor(1.f, 0.35f, 0.3f), Small, 1.2f * UIScale);
+	}
 
 	// hint towards the nearest crystal
 	const APawn* Pawn = PlayerOwner ? PlayerOwner->GetPawn() : nullptr;
@@ -89,7 +106,7 @@ void AOpenWorldHUD::DrawHUD()
 		if (BestDist < TNumericLimits<float>::Max())
 		{
 			DrawShadowedText(FString::Printf(TEXT("Nearest crystal: %d m %s"), FMath::RoundToInt(BestDist / 100.f), *CompassName(BestDelta)),
-				Pad, Pad + 128.f * UIScale, FLinearColor(1.f, 0.95f, 0.6f), Medium, 1.2f * UIScale);
+				Pad, Pad + 160.f * UIScale, FLinearColor(1.f, 0.95f, 0.6f), Medium, 1.2f * UIScale);
 		}
 	}
 
@@ -101,8 +118,19 @@ void AOpenWorldHUD::DrawHUD()
 	}
 
 	// controls
+	DrawShadowedText(TEXT("RMB aim   LMB hold to draw, release to shoot   Shift sprint   C sneak   E field dress"),
+		Pad, Canvas->ClipY - Pad - 44.f * UIScale, FLinearColor(1.f, 1.f, 1.f, 0.8f), Small, 1.2f * UIScale);
 	DrawShadowedText(TEXT("WASD move   Space jump   Mouse look   R return to start   N new world   T blocky/smooth"),
 		Pad, Canvas->ClipY - Pad - 20.f * UIScale, FLinearColor(1.f, 1.f, 1.f, 0.8f), Small, 1.2f * UIScale);
+
+	DrawVitals(UIScale);
+	DrawCrosshair(UIScale);
+
+	if (const AOpenWorldAnimal* Carcass = GameMode->GetHarvestTarget())
+	{
+		DrawCenteredText(FString::Printf(TEXT("E  Field dress the %s (%.1f kg)"), *AOpenWorldAnimal::GetKindName(Carcass->GetKind()).ToLower(), Carcass->GetMeatKg()),
+			Canvas->ClipY * 0.62f, FLinearColor(1.f, 0.9f, 0.6f), Medium, 1.4f * UIScale);
+	}
 
 	DrawMinimap(UIScale);
 }
@@ -158,4 +186,71 @@ void AOpenWorldHUD::DrawMinimap(float UIScale)
 	}
 
 	DrawShadowedText(TEXT("N"), X0 + Size * 0.5f - 5.f * UIScale, Y0 + 2.f * UIScale, FLinearColor::White, GEngine->GetSmallFont(), 1.2f * UIScale);
+}
+
+void AOpenWorldHUD::DrawVitals(float UIScale)
+{
+	const AOpenWorldGameMode* GameMode = GetWorld()->GetAuthGameMode<AOpenWorldGameMode>();
+	if (!GameMode)
+	{
+		return;
+	}
+
+	const float Pad = 24.f * UIScale;
+	const float W = 260.f * UIScale;
+	const float H = 12.f * UIScale;
+	const float X = Pad;
+	float Y = Canvas->ClipY - Pad - 100.f * UIScale;
+
+	auto Bar = [&](float Fraction, const FLinearColor& Color, const TCHAR* Label)
+	{
+		DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.55f), X - 2.f * UIScale, Y - 2.f * UIScale, W + 4.f * UIScale, H + 4.f * UIScale);
+		DrawRect(Color, X, Y, W * FMath::Clamp(Fraction, 0.f, 1.f), H);
+		DrawShadowedText(Label, X + W + 10.f * UIScale, Y - 4.f * UIScale, FLinearColor(1.f, 1.f, 1.f, 0.85f), GEngine->GetSmallFont(), 1.1f * UIScale);
+		Y += H + 10.f * UIScale;
+	};
+
+	const float Health = GameMode->GetHealth() / 100.f;
+	Bar(Health, Health > 0.3f ? FLinearColor(0.85f, 0.15f, 0.15f) : FLinearColor(1.f, 0.4f, 0.1f), TEXT("Health"));
+	Bar(GameMode->GetStamina() / 100.f, GameMode->IsExhausted() ? FLinearColor(0.6f, 0.5f, 0.2f) : FLinearColor(0.95f, 0.8f, 0.2f),
+		GameMode->IsSneaking() ? TEXT("Stamina  (sneaking)") : TEXT("Stamina"));
+}
+
+void AOpenWorldHUD::DrawCrosshair(float UIScale)
+{
+	const AOpenWorldGameMode* GameMode = GetWorld()->GetAuthGameMode<AOpenWorldGameMode>();
+	const AOpenWorldBow* Bow = GameMode ? GameMode->GetBow() : nullptr;
+	if (!Bow || !Bow->IsAiming())
+	{
+		return;
+	}
+
+	// four ticks that close in as the bow is drawn
+	const float CX = Canvas->ClipX * 0.5f;
+	const float CY = Canvas->ClipY * 0.5f;
+	const float Draw = Bow->GetDraw();
+	const float Gap = FMath::Lerp(22.f, 5.f, Draw) * UIScale;
+	const float Len = 10.f * UIScale;
+	const float Thick = 2.f * UIScale;
+	const FLinearColor Color = Draw >= 1.f ? FLinearColor(1.f, 0.85f, 0.2f) : FLinearColor(1.f, 1.f, 1.f, 0.9f);
+	const FLinearColor Shadow(0.f, 0.f, 0.f, 0.6f);
+	for (int32 Pass = 0; Pass < 2; ++Pass)
+	{
+		const FLinearColor& C = Pass == 0 ? Shadow : Color;
+		const float O = Pass == 0 ? 1.5f * UIScale : 0.f;
+		DrawLine(CX - Gap - Len + O, CY + O, CX - Gap + O, CY + O, C, Thick);
+		DrawLine(CX + Gap + O, CY + O, CX + Gap + Len + O, CY + O, C, Thick);
+		DrawLine(CX + O, CY - Gap - Len + O, CX + O, CY - Gap + O, C, Thick);
+		DrawLine(CX + O, CY + Gap + O, CX + O, CY + Gap + Len + O, C, Thick);
+	}
+	DrawRect(Color, CX - 1.5f * UIScale, CY - 1.5f * UIScale, 3.f * UIScale, 3.f * UIScale);
+
+	// draw strength meter under the crosshair
+	if (Bow->IsDrawing())
+	{
+		const float W = 80.f * UIScale;
+		const float Y = CY + 40.f * UIScale;
+		DrawRect(Shadow, CX - W * 0.5f - 2.f, Y - 2.f, W + 4.f, 6.f * UIScale + 4.f);
+		DrawRect(Color, CX - W * 0.5f, Y, W * Draw, 6.f * UIScale);
+	}
 }

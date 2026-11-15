@@ -2,6 +2,7 @@
 
 #include "OpenWorldGenerator.h"
 #include "OpenWorldCrystal.h"
+#include "OpenWorldAnimal.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -324,6 +325,7 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	NumCrystals = FMath::Max(NumCrystals, 1);
 	HillScale = FMath::Clamp(HillScale, 1.f, 4.f);
 	DetailNoise = FMath::Clamp(DetailNoise, 0.f, 200.f);
+	AnimalDensity = FMath::Clamp(AnimalDensity, 0.f, 4.f);
 
 	// the terrain never moves: static root so static instance layers can attach to it
 	Root->SetMobility(EComponentMobility::Static);
@@ -369,6 +371,7 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	BuildClouds(Stream);
 	FlushLayers();
 	BuildMapTexture();
+	SpawnAnimals();
 
 	// water surface: a thin slab covering the island and beyond
 	if (BaseMaterial)
@@ -1230,4 +1233,186 @@ void AOpenWorldGenerator::BuildMapTexture()
 
 	Mip.BulkData.Unlock();
 	MapTexture->UpdateResource();
+}
+
+bool AOpenWorldGenerator::IsOpenGround(float WorldX, float WorldY) const
+{
+	if (Heights.Num() == 0)
+	{
+		return false;
+	}
+	const float Half = GetHalfExtent();
+	const int32 X = FMath::FloorToInt((WorldX + Half) / TileSize);
+	const int32 Y = FMath::FloorToInt((WorldY + Half) / TileSize);
+	if (X < 2 || Y < 2 || X >= GridSize - 2 || Y >= GridSize - 2)
+	{
+		return false;
+	}
+	return IsLand(X, Y) && !HasTree[Index(X, Y)];
+}
+
+bool AOpenWorldGenerator::CanWalk(const FVector& From, const FVector& To, float MaxClimb, float MaxDrop) const
+{
+	const FVector Mid = (From + To) * 0.5f;
+	if (!IsOpenGround(To.X, To.Y) || !IsOpenGround(Mid.X, Mid.Y))
+	{
+		return false;
+	}
+
+	const float HalfDist = FVector::Dist2D(From, To) * 0.5f;
+	const bool bBlocky = TerrainStyle == EOpenWorldTerrainStyle::Blocky;
+	auto StepOk = [&](const FVector& A, const FVector& B)
+	{
+		const float Rise = SurfaceZ(B.X, B.Y) - SurfaceZ(A.X, A.Y);
+		if (bBlocky)
+		{
+			return Rise <= MaxClimb && -Rise <= MaxDrop;
+		}
+		// smooth terrain: anything steeper than ~40 degrees up counts as a cliff (the movement component can't climb it)
+		return Rise <= FMath::Min(MaxClimb, HalfDist * 0.8f) && -Rise <= FMath::Max(MaxDrop, HalfDist);
+	};
+	return StepOk(From, Mid) && StepOk(Mid, To);
+}
+
+void AOpenWorldGenerator::SpawnAnimals()
+{
+	// a separate stream: adding wildlife must not change the terrain or props of existing seeds
+	AnimalStream.Initialize(int32(uint32(Seed) * 7919u + 101u));
+
+	int32 LandTiles = 0;
+	for (int32 Y = 0; Y < GridSize; ++Y)
+	{
+		for (int32 X = 0; X < GridSize; ++X)
+		{
+			LandTiles += IsLand(X, Y) ? 1 : 0;
+		}
+	}
+	const float Scale = AnimalDensity * LandTiles / 9000.f;
+
+	struct FPlan { EOpenWorldAnimalKind Kind; float Groups; int32 MinSize; int32 MaxSize; };
+	const FPlan Plans[] = {
+		{ EOpenWorldAnimalKind::Deer, 4.f, 3, 5 },
+		{ EOpenWorldAnimalKind::Boar, 3.f, 1, 2 },
+		{ EOpenWorldAnimalKind::Rabbit, 8.f, 1, 2 } };
+	for (const FPlan& Plan : Plans)
+	{
+		const int32 Groups = Scale > 0.f ? FMath::Max(1, FMath::RoundToInt(Plan.Groups * Scale)) : 0;
+		int32 Spawned = 0;
+		for (int32 G = 0; G < Groups; ++G)
+		{
+			// leave the area around the spawn point quiet, but keep the first encounters a short walk away
+			Spawned += SpawnGroup(Plan.Kind, AnimalStream.RandRange(Plan.MinSize, Plan.MaxSize), SpawnLocation, 3000.f);
+		}
+		TargetPopulation[static_cast<int32>(Plan.Kind)] = Spawned;
+	}
+}
+
+int32 AOpenWorldGenerator::SpawnGroup(EOpenWorldAnimalKind Kind, int32 Size, const FVector& AwayFrom, float MinDistance)
+{
+	// preferred habitat per kind
+	auto Likes = [Kind](EOpenWorldBiome B)
+	{
+		switch (Kind)
+		{
+		case EOpenWorldAnimalKind::Deer:   return B == EOpenWorldBiome::Grass || B == EOpenWorldBiome::Forest;
+		case EOpenWorldAnimalKind::Boar:   return B == EOpenWorldBiome::Forest;
+		case EOpenWorldAnimalKind::Rabbit: return B == EOpenWorldBiome::Grass || B == EOpenWorldBiome::Sand;
+		}
+		return false;
+	};
+
+	// find a home range, relaxing to any land below the snow line if the habitat is rare on this island
+	FVector Centre = FVector::ZeroVector;
+	bool bFound = false;
+	for (int32 Try = 0; Try < 600 && !bFound; ++Try)
+	{
+		const int32 X = AnimalStream.RandRange(3, GridSize - 4);
+		const int32 Y = AnimalStream.RandRange(3, GridSize - 4);
+		const FVector C = TileCenter(X, Y);
+		if (!IsOpenGround(C.X, C.Y) || FVector::Dist2D(C, AwayFrom) < MinDistance)
+		{
+			continue;
+		}
+		const EOpenWorldBiome B = Biomes[Index(X, Y)];
+		if (Likes(B) || (Try > 300 && B != EOpenWorldBiome::Snow))
+		{
+			Centre = C;
+			bFound = true;
+		}
+	}
+	if (!bFound)
+	{
+		return 0;
+	}
+
+	const int32 HerdId = ++NextHerdId;
+	const float HalfHeight = AOpenWorldAnimal::GetCapsuleHalfHeight(Kind);
+	int32 Spawned = 0;
+	for (int32 Try = 0; Try < Size * 6 && Spawned < Size; ++Try)
+	{
+		FVector Loc = Centre;
+		if (Spawned > 0)
+		{
+			Loc += FVector(AnimalStream.FRandRange(-2.5f, 2.5f) * TileSize, AnimalStream.FRandRange(-2.5f, 2.5f) * TileSize, 0.f);
+		}
+		if (!IsOpenGround(Loc.X, Loc.Y))
+		{
+			continue;
+		}
+		Loc.Z = SurfaceZ(Loc.X, Loc.Y) + HalfHeight + 5.f;
+
+		const FTransform Xf(FRotator(0.f, AnimalStream.FRandRange(0.f, 360.f), 0.f), Loc);
+		AOpenWorldAnimal* Animal = GetWorld()->SpawnActorDeferred<AOpenWorldAnimal>(AOpenWorldAnimal::StaticClass(), Xf, nullptr, nullptr,
+			ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+		if (!Animal)
+		{
+			continue;
+		}
+		Animal->Setup(Kind, HerdId, AnimalStream.RandRange(1, MAX_int32 - 1));
+		Animal->FinishSpawning(Xf);
+		Animals.Add(Animal);
+		++Spawned;
+	}
+	return Spawned;
+}
+
+void AOpenWorldGenerator::ReplenishAnimals(const FVector& AwayFrom, float MinDistance)
+{
+	Animals.RemoveAll([](const TObjectPtr<AOpenWorldAnimal>& Animal) { return !IsValid(Animal); });
+
+	int32 Living[3] = { 0, 0, 0 };
+	for (const AOpenWorldAnimal* Animal : Animals)
+	{
+		if (!Animal->IsDead())
+		{
+			++Living[static_cast<int32>(Animal->GetKind())];
+		}
+	}
+
+	// at most one newcomer group per kind per call, so the island refills gradually
+	for (int32 K = 0; K < 3; ++K)
+	{
+		const int32 Missing = TargetPopulation[K] - Living[K];
+		if (Missing > 0)
+		{
+			const EOpenWorldAnimalKind Kind = static_cast<EOpenWorldAnimalKind>(K);
+			SpawnGroup(Kind, FMath::Min(Missing, Kind == EOpenWorldAnimalKind::Deer ? 3 : 1), AwayFrom, MinDistance);
+		}
+	}
+}
+
+void AOpenWorldGenerator::SetCloudGlow(float Glow)
+{
+	if (!CloudMaterial)
+	{
+		return;
+	}
+	for (UInstancedStaticMeshComponent* ISM : MeshLayers)
+	{
+		UMaterialInstanceDynamic* Mat = ISM ? Cast<UMaterialInstanceDynamic>(ISM->GetMaterial(0)) : nullptr;
+		if (Mat && Mat->Parent == CloudMaterial)
+		{
+			Mat->SetScalarParameterValue(TEXT("Glow"), Glow);
+		}
+	}
 }

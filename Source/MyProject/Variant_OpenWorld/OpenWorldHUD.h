@@ -26,4 +26,6 @@ protected:
 	void DrawShadowedText(const FString& Text, float X, float Y, const FLinearColor& Color, UFont* Font, float Scale);
 	void DrawCenteredText(const FString& Text, float Y, const FLinearColor& Color, UFont* Font, float Scale);
 	void DrawMinimap(float UIScale);
+	void DrawVitals(float UIScale);
+	void DrawCrosshair(float UIScale);
 };
