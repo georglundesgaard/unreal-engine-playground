@@ -30,6 +30,7 @@ void UOpenWorldShapeLibrary::Initialize(FSubsystemCollectionBase& Collection)
 		Meshes.Add(LoadObject<UStaticMesh>(nullptr, Path));
 	}
 	BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+	FurMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Variant_OpenWorld/M_Natural.M_Natural"));
 }
 
 UStaticMesh* UOpenWorldShapeLibrary::GetMesh(OpenWorldShapes::EShape Shape) const
@@ -38,25 +39,37 @@ UStaticMesh* UOpenWorldShapeLibrary::GetMesh(OpenWorldShapes::EShape Shape) cons
 	return Meshes.IsValidIndex(Index) ? Meshes[Index].Get() : nullptr;
 }
 
-UMaterialInstanceDynamic* UOpenWorldShapeLibrary::GetColorMaterial(const FColor& SRGB, float Roughness)
+UMaterialInstanceDynamic* UOpenWorldShapeLibrary::GetColorMaterial(const FColor& SRGB, float Roughness, OpenWorldShapes::ESurface Surface)
 {
-	if (!BaseMaterial)
+	using OpenWorldShapes::ESurface;
+	if (Surface == ESurface::Glossy)
+	{
+		Roughness = 0.12f;
+	}
+	UMaterialInterface* Parent = Surface == ESurface::Fur && FurMaterial ? FurMaterial.Get() : BaseMaterial.Get();
+	if (!Parent)
 	{
 		return nullptr;
 	}
-	const uint64 Key = (uint64(SRGB.DWColor()) << 32) | uint64(FMath::RoundToInt(FMath::Clamp(Roughness, 0.f, 1.f) * 1000.f));
+	const uint64 Key = (uint64(SRGB.DWColor()) << 32) | (uint64(Surface) << 16) | uint64(FMath::RoundToInt(FMath::Clamp(Roughness, 0.f, 1.f) * 1000.f));
 	TObjectPtr<UMaterialInstanceDynamic>& Mat = ColorMaterials.FindOrAdd(Key);
 	if (!Mat)
 	{
-		Mat = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+		Mat = UMaterialInstanceDynamic::Create(Parent, this);
 		Mat->SetVectorParameterValue(TEXT("Color"), FLinearColor::FromSRGBColor(SRGB));
-		Mat->SetScalarParameterValue(TEXT("Roughness"), Roughness);
+		Mat->SetScalarParameterValue(TEXT("Roughness"), Surface == ESurface::Fur ? 0.95f : Roughness);
+		if (Surface == ESurface::Fur)
+		{
+			// soft light catching the edge of the coat; no world-space noise, it would swim on a moving animal
+			Mat->SetScalarParameterValue(TEXT("Sheen"), 0.45f);
+			Mat->SetScalarParameterValue(TEXT("NoiseAmount"), 0.f);
+		}
 	}
 	return Mat;
 }
 
 UStaticMeshComponent* UOpenWorldShapeLibrary::AddPart(AActor* Owner, USceneComponent* Parent, OpenWorldShapes::EShape Shape, const FColor& SRGB,
-	const FVector& Location, const FRotator& Rotation, const FVector& SizeCm, bool bCastShadow)
+	const FVector& Location, const FRotator& Rotation, const FVector& SizeCm, bool bCastShadow, OpenWorldShapes::ESurface Surface)
 {
 	UStaticMeshComponent* Part = NewObject<UStaticMeshComponent>(Owner);
 	Part->SetMobility(EComponentMobility::Movable);
@@ -68,7 +81,7 @@ UStaticMeshComponent* UOpenWorldShapeLibrary::AddPart(AActor* Owner, USceneCompo
 	Part->SetGenerateOverlapEvents(false);
 	Part->SetCanEverAffectNavigation(false);
 	Part->SetCastShadow(bCastShadow);
-	if (UMaterialInstanceDynamic* Mat = GetColorMaterial(SRGB))
+	if (UMaterialInstanceDynamic* Mat = GetColorMaterial(SRGB, 0.85f, Surface))
 	{
 		Part->SetMaterial(0, Mat);
 	}

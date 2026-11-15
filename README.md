@@ -36,14 +36,14 @@ Each time you start the game, you get a new island built from instanced cubes. T
 | `N` | Generate a brand-new world |
 | `T` | Switch between smooth and blocky terrain. This reloads the same island, so collected crystals, the timer, the clock and the hunt log reset. |
 
-To replay a specific island, open the map with a seed, for example `?Seed=1234` in the map URL. `?Style=Blocky` or `?Style=Smooth` picks the terrain style. In the editor, the console variables `OpenWorld.Seed <n>` and `OpenWorld.TerrainStyle <0|1>` (0 = Blocky, 1 = Smooth, -1 = default) force the seed or style for the next Play or Simulate session.
+To replay a specific island, open the map with a seed, for example `?Seed=1234` in the map URL. `?Style=Blocky` or `?Style=Smooth` picks the terrain style. In the editor, the console variables `OpenWorld.Seed <n>` and `OpenWorld.TerrainStyle <0|1>` (0 = Blocky, 1 = Smooth, -1 = default) force the seed or style for the next Play or Simulate session. `OpenWorld.WindScale <x>` scales how far plants sway in the wind (1 = default, 0 = still).
 
 ### Terrain styles
 
 | Smooth (default) | Blocky |
 |---|---|
 | One continuous procedural mesh. Each corner's height is the average of the tiles around it, then blurred. Heights above the water line are then stretched (`HillScale`), which gives tall hills without moving the coastline, and small surface bumps are added (`DetailNoise`). The mesh has smooth normals, and its vertex colours blend biomes into soft gradients. | One instanced cube column per tile, giving a stepped voxel look with hard biome edges. |
-| **Detailed props:** oaks (root flare, branches, clustered crowns, some in autumn colours), white birches, layered pines that get snow caps high up, bushes with berries, grass tufts, flowers on stems, mushrooms, fallen logs and stumps, boulder clusters with pebbles, reeds and cattails along the shore, and fluffy sphere clouds. Small props are not drawn beyond 70 m. | **Simple props:** cube trees, cone pines, cube boulders and flowers, and box clouds. |
+| **Detailed props:** oaks (root flare, branches, uneven crowns of many lobes, some in autumn colours), white birches with airy clusters, layered pines that get snow caps high up, bushes with berries, grass tufts, flowers on stems, mushrooms, fallen logs and stumps, boulder clusters with pebbles, reeds and cattails along the shore, and fluffy sphere clouds. Small props are not drawn beyond 70 m.<br><br>**Natural materials:** leaves, needles and grass use `M_Foliage`, with light shining through, a different tint per plant, leafy light and dark patches, darker undersides, and crowns, grasses and reeds that sway in the wind. Bark, rock and mushrooms use `M_Natural`, with streaky or blotchy world-space noise. | **Simple props:** cube trees, cone pines, cube boulders and flowers, and box clouds. |
 
 Both styles come from the same height map, so crystals and the spawn point stay in the same places when you switch. Vegetation is generated in each style's own look. Everything is placed on whichever ground surface is active.
 
@@ -77,20 +77,20 @@ Animals graze, wander and stay close to their herd. They **hear** you depending 
 - **Health:** hard landings and boar charges hurt, and health slowly recovers once you are out of danger. If it runs out, you wake up back at the start and lose half your meat.
 - **Stamina:** sprinting drains it. When it runs out you must catch your breath before you can sprint again.
 
-For testing in the editor, the console commands `HuntTest [kind] [distance]` (kind 0 = deer, 1 = boar, 2 = rabbit), `HuntStatus` and `SetTimeOfDay <hours>` are available. `HuntTest` walks to the nearest animal of that kind and shoots it; a distance of `0` walks to the nearest carcass and `-1` field dresses it.
+For testing in the editor, the console commands `HuntTest [kind] [distance]` (kind 0 = deer, 1 = boar, 2 = rabbit), `HuntStatus` and `SetTimeOfDay <hours>` are available. `HuntTest` walks to the nearest animal of that kind and shoots it. A distance of `0` walks to the nearest carcass, `-1` field dresses it, and a distance below `-1` (for example `-400`) walks up to the animal and just watches it from that many cm. `HuntAim <draw>` holds the bow aimed at a draw from 0 to 1, and `HuntAim -1` releases it.
 
 ### How it works
 
 | Class | Responsibility |
 |---|---|
 | [`AOpenWorldGenerator`](Source/MyProject/Variant_OpenWorld/OpenWorldGenerator.h) | Builds the height map with fractal Perlin noise plus an island falloff, limits slopes, assigns biomes, builds the terrain (a smooth procedural mesh or blocky instanced cubes), places the spawn point and crystals (using a search for tiles the player can reach), scatters decoration into instanced mesh layers, creates the minimap texture, and spawns and replenishes wildlife. It also answers terrain questions for the animals (ground height, open ground, walkable strides). |
-| [`AOpenWorldAnimal`](Source/MyProject/Variant_OpenWorld/OpenWorldAnimal.h) | Deer, boar or rabbit built from basic shapes, with procedural walk, gallop and hop animation. Senses, herd behaviour, steering without a navmesh, hit zones, bleeding and death. |
+| [`AOpenWorldAnimal`](Source/MyProject/Variant_OpenWorld/OpenWorldAnimal.h) | Deer, boar or rabbit built from basic shapes: a barrel, chest and haunches, a tapered neck, jointed legs, ears that move, glossy eyes and noses, and a soft fur material with a rim sheen. Procedural walk, gallop and hop animation with folding knees, breathing that speeds up after a run, ear flicks, and a head that turns towards a noise. Senses, herd behaviour, steering without a navmesh, hit zones, bleeding and death. |
 | [`AOpenWorldBow`](Source/MyProject/Variant_OpenWorld/OpenWorldBow.h) / [`AOpenWorldArrow`](Source/MyProject/Variant_OpenWorld/OpenWorldArrow.h) | The bow (aiming, drawing, aim sway, quiver, over-the-shoulder camera) and the arrow (gravity, drag, sub-stepped sweeps, sticking into targets) |
 | [`AOpenWorldCrystal`](Source/MyProject/Variant_OpenWorld/OpenWorldCrystal.h) | Spinning, glowing collectible with a light beam |
 | [`AOpenWorldGameMode`](Source/MyProject/Variant_OpenWorld/OpenWorldGameMode.h) | Chooses the seed, generates the world, spawns sky and lighting when the level has none, runs the day/night cycle, tracks the objective and the hunt, gives the player the bow, handles health, stamina, sprinting and sneaking, deep-water resets, and the `R`/`N`/`T`/`E` keys |
 | [`AOpenWorldHUD`](Source/MyProject/Variant_OpenWorld/OpenWorldHUD.h) | HUD drawn on the canvas: counter, timer, clock, seed, hunt log, arrows, health and stamina bars, crosshair with draw meter, nearest-crystal hint and minimap |
 
-All visuals use engine basic shapes (`/Engine/BasicShapes`) with colour-tinted material instances. The only exception is the smooth terrain, which uses a small vertex-colour material (`M_TerrainVertexColor`) and the `ProceduralMeshComponent` plugin. The game needs no other art assets. The player character and input come from the template's `BP_ThirdPersonCharacter` and `BP_ThirdPersonPlayerController`.
+All visuals use engine basic shapes (`/Engine/BasicShapes`) with colour-tinted material instances. The exceptions are a few small materials: `M_TerrainVertexColor` for the smooth terrain (with the `ProceduralMeshComponent` plugin), `M_Cloud`, `M_Foliage` and `M_Natural`. The game needs no other art assets. The player character and input come from the template's `BP_ThirdPersonCharacter` and `BP_ThirdPersonPlayerController`.
 
 ## Other template variants
 
@@ -131,7 +131,7 @@ You can also right-click `MyProject.uproject`, choose **Generate Visual Studio p
 
 ```
 Config/                       Project settings (startup map, game mode, asset manager)
-Content/Variant_OpenWorld/    Lvl_OpenWorld map, M_TerrainVertexColor and M_Cloud materials
+Content/Variant_OpenWorld/    Lvl_OpenWorld map; M_TerrainVertexColor, M_Cloud, M_Foliage and M_Natural materials
 Docs/Images/                  README screenshots
 Content/...                   Template characters, input and variant levels
 Source/MyProject/

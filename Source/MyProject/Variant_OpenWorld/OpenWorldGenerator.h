@@ -169,6 +169,14 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> CloudMaterial;
 
+	/** Smooth style leaves, needles and grass: two-sided foliage shading, per-instance tint, darker undersides, wind sway */
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> FoliageMaterial;
+
+	/** Smooth style bark, rock and mushrooms: world-space noise mottling and soft underside shading */
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> NaturalMaterial;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UProceduralMeshComponent> TerrainMesh;
 
@@ -202,8 +210,16 @@ private:
 		 *  falls back to BasicShapeMaterial instead of dereferencing a dangling pointer.
 		 */
 		TWeakObjectPtr<UMaterialInterface> Material;
+		/** M_Foliage: sway at the top of each instance (cm) */
+		float Wind = 0.f;
+		/** M_Natural: world-space noise frequency per axis, and how strongly it darkens or lightens */
+		FVector NoiseScale = FVector(0.03f);
+		float NoiseAmount = 0.f;
 		TArray<FTransform> Instances;
 	};
+
+	/** Smooth style: picks the material and its settings for a new decoration layer from the layer's name */
+	void ApplyNaturalLook(FName Name, FLayerBuild& Layer) const;
 
 	/** Finds or creates a layer. Like every other setting, Material is fixed by the call that creates the layer. */
 	FLayerBuild& Layer(FName Name, UStaticMesh* Mesh, const FColor& SRGB, bool bCollision, bool bShadows = true, float Roughness = 0.85f,

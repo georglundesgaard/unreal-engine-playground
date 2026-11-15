@@ -11,6 +11,11 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
 #include "ProceduralMeshComponent.h"
+#include "HAL/IConsoleManager.h"
+
+static TAutoConsoleVariable<float> CVarOpenWorldWindScale(
+	TEXT("OpenWorld.WindScale"), 1.f,
+	TEXT("Multiplies how far plants sway in the wind (0 = still). Applies to the next generated world."));
 
 namespace OpenWorldColors
 {
@@ -63,6 +68,12 @@ AOpenWorldGenerator::AOpenWorldGenerator()
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> CloudMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_Cloud.M_Cloud"));
 	CloudMaterial = CloudMaterialFinder.Object;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> FoliageMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_Foliage.M_Foliage"));
+	FoliageMaterial = FoliageMaterialFinder.Object;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> NaturalMaterialFinder(TEXT("/Game/Variant_OpenWorld/M_Natural.M_Natural"));
+	NaturalMaterial = NaturalMaterialFinder.Object;
 
 	Water->SetStaticMesh(CubeMesh);
 }
@@ -304,8 +315,68 @@ AOpenWorldGenerator::FLayerBuild& AOpenWorldGenerator::Layer(FName Name, UStatic
 		Found->Roughness = Roughness;
 		Found->CullDistance = CullDistance;
 		Found->Material = Material;
+		if (!Material && TerrainStyle == EOpenWorldTerrainStyle::Smooth)
+		{
+			ApplyNaturalLook(Name, *Found);
+		}
 	}
 	return *Found;
+}
+
+void AOpenWorldGenerator::ApplyNaturalLook(FName Name, FLayerBuild& L) const
+{
+	const FString N = Name.GetPlainNameString();
+	auto Is = [&N](const TCHAR* Prefix) { return N.StartsWith(Prefix); };
+
+	if (FoliageMaterial)
+	{
+		// swaying canopies and grasses; parts attached to something else (berries on bushes, petals on stems) stay still
+		// so they never drift away from what they grow on
+		if (Is(TEXT("Leaves")) || Is(TEXT("PineNeedles")) || Is(TEXT("PineSnow")))
+		{
+			L.Material = FoliageMaterial;
+			L.Wind = 5.f;
+			return;
+		}
+		if (Is(TEXT("GrassBlade")) || Is(TEXT("Reed")))
+		{
+			L.Material = FoliageMaterial;
+			L.Wind = 6.f;
+			return;
+		}
+		if (Is(TEXT("Bush")) || Is(TEXT("Berries")) || Is(TEXT("Flower")) || Is(TEXT("Cattail")))
+		{
+			L.Material = FoliageMaterial;
+			L.Wind = 0.f;
+			return;
+		}
+	}
+	if (NaturalMaterial)
+	{
+		// bark: streaks stretched along the trunk
+		if (Is(TEXT("OakTrunk")) || Is(TEXT("OakBranch")) || Is(TEXT("PineTrunk")) || Is(TEXT("BirchTrunk")) || Is(TEXT("BirchMark"))
+			|| Is(TEXT("Log")) || Is(TEXT("Stump")))
+		{
+			L.Material = NaturalMaterial;
+			L.NoiseScale = FVector(0.09f, 0.09f, 0.008f);
+			L.NoiseAmount = Is(TEXT("Birch")) ? 0.18f : 0.4f;
+			return;
+		}
+		// stone: blotchy, slightly lichen-dark
+		if (Is(TEXT("Rock")) || Is(TEXT("Pebble")))
+		{
+			L.Material = NaturalMaterial;
+			L.NoiseScale = FVector(0.025f);
+			L.NoiseAmount = Is(TEXT("RockSnow")) ? 0.08f : 0.35f;
+			return;
+		}
+		if (Is(TEXT("Mushroom")))
+		{
+			L.Material = NaturalMaterial;
+			L.NoiseScale = FVector(0.2f);
+			L.NoiseAmount = 0.12f;
+		}
+	}
 }
 
 void AOpenWorldGenerator::Generate(int32 InSeed)
@@ -335,6 +406,10 @@ void AOpenWorldGenerator::Generate(int32 InSeed)
 	if (!TerrainMaterial)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OpenWorldGenerator: M_TerrainVertexColor not found, falling back to blocky terrain. Run 'git lfs pull'?"));
+	}
+	if (!FoliageMaterial || !NaturalMaterial)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenWorldGenerator: M_Foliage or M_Natural not found, plants use BasicShapeMaterial. Run 'git lfs pull'?"));
 	}
 	if (!CloudMaterial)
 	{
@@ -875,11 +950,15 @@ void AOpenWorldGenerator::BuildDetailedDecorations(FRandomStream& Stream)
 					{
 						Cyl("BirchMark", BirchMark, false, false, NearCull, Base + FVector(0.f, 0.f, Stream.FRandRange(0.12f, 0.8f) * TrunkH), FRotator::ZeroRotator, R * 1.08f, 6.f);
 					}
-					for (int32 C = 0; C < 3; ++C)
+					// loose, airy clusters climbing the upper trunk
+					const int32 Clusters = Stream.RandRange(4, 6);
+					for (int32 C = 0; C < Clusters; ++C)
 					{
-						const FVector P = Base + FVector(Stream.FRandRange(-30.f, 30.f) * S, Stream.FRandRange(-30.f, 30.f) * S, TrunkH * 0.78f + C * 60.f * S);
-						const float K = Stream.FRandRange(0.8f, 1.1f) * S;
-						Ball("LeavesBirch", LeafBirch, false, true, 0.f, P, FVector(70.f, 70.f, 110.f) * K);
+						const float Up = float(C) / (Clusters - 1);
+						const float Spread = FMath::Lerp(45.f, 15.f, Up) * S;
+						const FVector P = Base + FVector(Stream.FRandRange(-Spread, Spread), Stream.FRandRange(-Spread, Spread), TrunkH * 0.7f + Up * 170.f * S);
+						const float K = Stream.FRandRange(0.75f, 1.05f) * S * FMath::Lerp(1.f, 0.7f, Up);
+						Ball("LeavesBirch", LeafBirch, false, true, 0.f, P, FVector(60.f, 60.f, 85.f) * K);
 					}
 				}
 				else
@@ -905,12 +984,16 @@ void AOpenWorldGenerator::BuildDetailedDecorations(FRandomStream& Stream)
 					const float R = 150.f * S;
 					const FVector Crown = Base + FVector(0.f, 0.f, TrunkH + R * 0.35f);
 					Ball(LeafName, LeafColor, false, true, 0.f, Crown, FVector(R, R, R * 0.85f));
-					const int32 Lobes = Stream.RandRange(3, 5);
+					// a ring of lobes around the core plus a few on top gives a cloud-like, uneven canopy
+					const int32 Lobes = Stream.RandRange(6, 9);
 					for (int32 L = 0; L < Lobes; ++L)
 					{
-						const FVector Off(Stream.FRandRange(-0.7f, 0.7f) * R, Stream.FRandRange(-0.7f, 0.7f) * R, Stream.FRandRange(-0.2f, 0.45f) * R);
-						const float LR = R * Stream.FRandRange(0.5f, 0.75f);
-						Ball(LeafName, LeafColor, false, true, 0.f, Crown + Off, FVector(LR, LR, LR * 0.9f));
+						const float Angle = (L + Stream.FRandRange(-0.3f, 0.3f)) / Lobes * UE_TWO_PI;
+						const bool bTop = L % 3 == 2;
+						const float Reach = bTop ? Stream.FRandRange(0.1f, 0.4f) : Stream.FRandRange(0.6f, 0.85f);
+						const FVector Off(FMath::Cos(Angle) * Reach * R, FMath::Sin(Angle) * Reach * R, (bTop ? Stream.FRandRange(0.35f, 0.6f) : Stream.FRandRange(-0.3f, 0.25f)) * R);
+						const float LR = R * Stream.FRandRange(0.42f, 0.66f);
+						Ball(LeafName, LeafColor, false, true, 0.f, Crown + Off, FVector(LR, LR, LR * 0.85f), FRotator(0.f, Stream.FRandRange(0.f, 360.f), 0.f));
 					}
 				}
 				continue;
@@ -1173,6 +1256,10 @@ void AOpenWorldGenerator::FlushLayers()
 			UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(Parent, this);
 			Mat->SetVectorParameterValue(TEXT("Color"), L.Color);
 			Mat->SetScalarParameterValue(TEXT("Roughness"), L.Roughness);
+			// M_Foliage / M_Natural settings (ignored by materials without them)
+			Mat->SetScalarParameterValue(TEXT("Wind"), L.Wind * FMath::Max(CVarOpenWorldWindScale.GetValueOnGameThread(), 0.f));
+			Mat->SetVectorParameterValue(TEXT("NoiseScale"), FLinearColor(L.NoiseScale.X, L.NoiseScale.Y, L.NoiseScale.Z));
+			Mat->SetScalarParameterValue(TEXT("NoiseAmount"), L.NoiseAmount);
 
 			// materials with a glow (M_Cloud) tint it by the layer colour, so a coloured layer glows the same colour
 			FLinearColor GlowColor;
