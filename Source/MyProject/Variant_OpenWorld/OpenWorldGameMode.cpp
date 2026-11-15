@@ -37,8 +37,6 @@ static TAutoConsoleVariable<int32> CVarOpenWorldTerrainStyle(
 
 namespace
 {
-	const FName NightGradingTag(TEXT("OpenWorldNightGrading"));
-
 	/** Sun height above the horizon (degrees) for a clock time: up at 6, highest (60) at noon, down at 18 */
 	float SunElevation(float Hours)
 	{
@@ -204,12 +202,9 @@ void AOpenWorldGameMode::SpawnEnvironment()
 	}
 
 	// night grading: auto exposure would otherwise brighten the night back to day
-	{
-		APostProcessVolume* Grading = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), FTransform::Identity);
-		Grading->bUnbound = true;
-		Grading->Priority = 10.f;
-		Grading->Tags.Add(NightGradingTag);
-	}
+	NightGrading = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), FTransform::Identity);
+	NightGrading->bUnbound = true;
+	NightGrading->Priority = 10.f;
 
 	if (!TActorIterator<AExponentialHeightFog>(World))
 	{
@@ -404,18 +399,16 @@ void AOpenWorldGameMode::UpdateDayNight(float DeltaSeconds)
 
 	// darker, bluer and less saturated as the light goes
 	const float Night = 1.f - Daylight;
-	for (TActorIterator<APostProcessVolume> It(GetWorld()); It; ++It)
+	if (NightGrading)
 	{
-		if (It->Tags.Contains(NightGradingTag))
 		{
-			FPostProcessSettings& PP = It->Settings;
+			FPostProcessSettings& PP = NightGrading->Settings;
 			PP.bOverride_AutoExposureBias = true;
 			PP.AutoExposureBias = -3.f * Night;
 			PP.bOverride_ColorSaturation = true;
 			PP.ColorSaturation = FVector4(FMath::Lerp(1.f, 0.55f, Night), FMath::Lerp(1.f, 0.55f, Night), FMath::Lerp(1.f, 0.65f, Night), 1.f);
 			PP.bOverride_ColorGain = true;
 			PP.ColorGain = FVector4(FMath::Lerp(1.f, 0.8f, Night), FMath::Lerp(1.f, 0.9f, Night), FMath::Lerp(1.f, 1.15f, Night), 1.f);
-			break;
 		}
 	}
 }
@@ -524,6 +517,13 @@ void AOpenWorldGameMode::DamagePlayer(float Amount, const FString& Cause, const 
 	Health = FMath::Max(Health - Amount, 0.f);
 	LastDamageTime = GetWorld()->GetTimeSeconds();
 
+	if (Health <= 0.f)
+	{
+		// no knockback: it would be applied after the respawn teleport and fling the player away from camp
+		HandlePlayerDeath(Cause);
+		return;
+	}
+
 	APlayerController* PC = GetWorld()->GetFirstPlayerController();
 	ACharacter* Character = PC ? Cast<ACharacter>(PC->GetPawn()) : nullptr;
 	if (Character && !From.IsZero())
@@ -532,14 +532,7 @@ void AOpenWorldGameMode::DamagePlayer(float Amount, const FString& Cause, const 
 		Character->LaunchCharacter(Away * 700.f + FVector(0.f, 0.f, 320.f), true, true);
 	}
 
-	if (Health <= 0.f)
-	{
-		HandlePlayerDeath(Cause);
-	}
-	else
-	{
-		ShowMessage(Cause, 2.f);
-	}
+	ShowMessage(Cause, 2.f);
 }
 
 void AOpenWorldGameMode::HandlePlayerDeath(const FString& Cause)
@@ -549,6 +542,7 @@ void AOpenWorldGameMode::HandlePlayerDeath(const FString& Cause)
 	{
 		Character->SetActorLocation(Generator->GetSpawnLocation(), false, nullptr, ETeleportType::TeleportPhysics);
 		Character->GetCharacterMovement()->StopMovementImmediately();
+		Character->GetCharacterMovement()->PendingLaunchVelocity = FVector::ZeroVector;
 	}
 	bWasFalling = false;
 	FallSpeed = 0.f;
@@ -642,8 +636,16 @@ void AOpenWorldGameMode::HarvestCarcass(AOpenWorldAnimal* Target)
 	{
 		if (AOpenWorldArrow* Arrow = Cast<AOpenWorldArrow>(Actor))
 		{
-			Recovered += Bow ? Bow->AddArrows(1) : 0;
-			Arrow->Destroy();
+			if (Bow && Bow->AddArrows(1) > 0)
+			{
+				++Recovered;
+				Arrow->Destroy();
+			}
+			else
+			{
+				// quiver full: leave it on the ground to pick up later
+				Arrow->DropFromCarcass();
+			}
 		}
 	}
 	const FString Name = AOpenWorldAnimal::GetKindName(Target->GetKind()).ToLower();

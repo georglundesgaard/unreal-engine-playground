@@ -76,9 +76,6 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<USceneComponent> NockedArrow;
 
-	UPROPERTY(Transient)
-	TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> MaterialCache;
-
 	UPROPERTY(EditAnywhere, Category="Bow")
 	int32 MaxArrows = 24;
 

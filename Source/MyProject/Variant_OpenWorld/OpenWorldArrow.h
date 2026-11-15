@@ -26,6 +26,9 @@ public:
 
 	void Launch(const FVector& InVelocity, AActor* InShooter);
 
+	/** Leaves a carcass that is being field dressed and lies on the ground, ready to be picked up */
+	void DropFromCarcass();
+
 	/** Stuck in the ground or a tree, not in an animal */
 	bool CanBePickedUp() const { return bStuck && !bInAnimal; }
 
@@ -39,8 +42,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category="Components")
 	TObjectPtr<USceneComponent> Root;
 
-	UPROPERTY(Transient)
-	TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> MaterialCache;
 
 	TWeakObjectPtr<AActor> Shooter;
 	FVector Velocity = FVector::ZeroVector;

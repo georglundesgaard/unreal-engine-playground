@@ -170,11 +170,9 @@ void AOpenWorldAnimal::BeginPlay()
 
 	BuildBody();
 
-	if (UMaterialInstanceDynamic* BloodMat = MakeColorMaterial(this, BloodColor, 0.3f))
-	{
-		BloodTrail->SetStaticMesh(OpenWorldShapes::GetMesh(EShape::Sphere));
-		BloodTrail->SetMaterial(0, BloodMat);
-	}
+	UOpenWorldShapeLibrary* Shapes = GetWorld()->GetSubsystem<UOpenWorldShapeLibrary>();
+	BloodTrail->SetStaticMesh(Shapes->GetMesh(EShape::Sphere));
+	BloodTrail->SetMaterial(0, Shapes->GetColorMaterial(BloodColor, 0.3f));
 	BloodTrail->SetWorldTransform(FTransform::Identity);
 
 	SetActorRotation(FRotator(0.f, Stream.FRandRange(0.f, 360.f), 0.f));
@@ -206,9 +204,10 @@ void AOpenWorldAnimal::BuildBody()
 		}
 		return Part;
 	};
-	auto Part = [this](USceneComponent* Parent, EShape Shape, const FColor& Color, const FVector& Loc, const FRotator& Rot, const FVector& Size, bool bShadow = true)
+	UOpenWorldShapeLibrary* Shapes = GetWorld()->GetSubsystem<UOpenWorldShapeLibrary>();
+	auto Part = [this, Shapes](USceneComponent* Parent, EShape Shape, const FColor& Color, const FVector& Loc, const FRotator& Rot, const FVector& Size, bool bShadow = true)
 	{
-		return AddPart(this, Parent, Shape, Color, Loc, Rot, Size, MaterialCache, bShadow);
+		return Shapes->AddPart(this, Parent, Shape, Color, Loc, Rot, Size, bShadow);
 	};
 	auto NewPivot = [this](USceneComponent* Parent, const FVector& Loc, const TCHAR* Name)
 	{
@@ -479,7 +478,11 @@ void AOpenWorldAnimal::Startle(const FVector& From, bool bWarnHerd)
 
 	const APawn* Player = GetPlayerPawn();
 	const float PlayerDist = Player ? FVector::Dist(Player->GetActorLocation(), GetActorLocation()) : TNumericLimits<float>::Max();
-	if (S.bAggressive && Player && ChargeCooldown <= 0.f && (IsWounded() || PlayerDist < 700.f))
+	if (State == EOpenWorldAnimalState::Charge)
+	{
+		// already charging: keep the original time limit, new noises don't extend it
+	}
+	else if (S.bAggressive && Player && ChargeCooldown <= 0.f && (IsWounded() || PlayerDist < 700.f))
 	{
 		// a hurt or cornered boar goes for the hunter
 		Threat = Player->GetActorLocation();
@@ -562,7 +565,6 @@ void AOpenWorldAnimal::UpdateBehaviour(float DeltaSeconds)
 		}
 		else
 		{
-			// rabbits move in short hops between pauses
 			Steer(Delta, S.WalkSpeed * Wounded, DeltaSeconds);
 		}
 		break;

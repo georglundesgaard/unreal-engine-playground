@@ -11,6 +11,7 @@ class AOpenWorldAnimal;
 class AOpenWorldBow;
 class AOpenWorldCrystal;
 class ADirectionalLight;
+class APostProcessVolume;
 class ACharacter;
 
 /**
@@ -155,6 +156,10 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ADirectionalLight> Moon;
+
+	/** Unbound post-process volume that darkens and cools the picture at night */
+	UPROPERTY(Transient)
+	TObjectPtr<APostProcessVolume> NightGrading;
 
 	int32 Seed = 0;
 	int32 Collected = 0;

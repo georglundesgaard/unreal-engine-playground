@@ -46,15 +46,16 @@ void AOpenWorldBow::BeginPlay()
 
 	const FColor Wood(132, 86, 46), Grip(58, 40, 30), String(236, 230, 214);
 	const FColor Shaft(186, 150, 104), Head(90, 92, 96), Feather(220, 60, 50);
+	UOpenWorldShapeLibrary* Shapes = GetWorld()->GetSubsystem<UOpenWorldShapeLibrary>();
 
-	AddPart(this, Root, EShape::Cylinder, Grip, FVector::ZeroVector, FRotator::ZeroRotator, FVector(5.f, 5.f, 16.f), MaterialCache);
+	Shapes->AddPart(this, Root, EShape::Cylinder, Grip, FVector::ZeroVector, FRotator::ZeroRotator, FVector(5.f, 5.f, 16.f));
 	for (int32 i = 0; i < 4; ++i)
 	{
-		Limbs.Add(AddPart(this, Root, EShape::Cylinder, Wood, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f), MaterialCache));
+		Limbs.Add(Shapes->AddPart(this, Root, EShape::Cylinder, Wood, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f)));
 	}
 	for (int32 i = 0; i < 2; ++i)
 	{
-		Strings.Add(AddPart(this, Root, EShape::Cylinder, String, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f), MaterialCache, false));
+		Strings.Add(Shapes->AddPart(this, Root, EShape::Cylinder, String, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f), false));
 	}
 
 	// the arrow on the string, shown while aiming
@@ -63,9 +64,9 @@ void AOpenWorldBow::BeginPlay()
 	NockedArrow->RegisterComponent();
 	AddInstanceComponent(NockedArrow);
 	const float L = AOpenWorldArrow::Length;
-	AddPart(this, NockedArrow, EShape::Cylinder, Shaft, FVector(L * 0.5f, 0.f, 0.f), FRotator(-90.f, 0.f, 0.f), FVector(1.4f, 1.4f, L), MaterialCache, false);
-	AddPart(this, NockedArrow, EShape::Cone, Head, FVector(L + 3.f, 0.f, 0.f), FRotator(-90.f, 0.f, 0.f), FVector(3.f, 3.f, 7.f), MaterialCache, false);
-	AddPart(this, NockedArrow, EShape::Cube, Feather, FVector(7.f, 0.f, 0.f), FRotator::ZeroRotator, FVector(10.f, 0.4f, 5.f), MaterialCache, false);
+	Shapes->AddPart(this, NockedArrow, EShape::Cylinder, Shaft, FVector(L * 0.5f, 0.f, 0.f), FRotator(-90.f, 0.f, 0.f), FVector(1.4f, 1.4f, L), false);
+	Shapes->AddPart(this, NockedArrow, EShape::Cone, Head, FVector(L + 3.f, 0.f, 0.f), FRotator(-90.f, 0.f, 0.f), FVector(3.f, 3.f, 7.f), false);
+	Shapes->AddPart(this, NockedArrow, EShape::Cube, Feather, FVector(7.f, 0.f, 0.f), FRotator::ZeroRotator, FVector(10.f, 0.4f, 5.f), false);
 
 	UpdateVisual();
 }

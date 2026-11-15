@@ -24,12 +24,26 @@ void AOpenWorldArrow::BeginPlay()
 
 	// built along +X: tip at +Length/2, fletching at the back
 	const FColor Shaft(186, 150, 104), Head(90, 92, 96), Feather(220, 60, 50), FeatherLight(240, 236, 226);
-	AddPart(this, Root, EShape::Cylinder, Shaft, FVector::ZeroVector, FRotator(-90.f, 0.f, 0.f), FVector(1.4f, 1.4f, Length), MaterialCache, false);
-	AddPart(this, Root, EShape::Cone, Head, FVector(Length * 0.5f + 3.f, 0.f, 0.f), FRotator(-90.f, 0.f, 0.f), FVector(3.f, 3.f, 7.f), MaterialCache, false);
+	UOpenWorldShapeLibrary* Shapes = GetWorld()->GetSubsystem<UOpenWorldShapeLibrary>();
+	Shapes->AddPart(this, Root, EShape::Cylinder, Shaft, FVector::ZeroVector, FRotator(-90.f, 0.f, 0.f), FVector(1.4f, 1.4f, Length), false);
+	Shapes->AddPart(this, Root, EShape::Cone, Head, FVector(Length * 0.5f + 3.f, 0.f, 0.f), FRotator(-90.f, 0.f, 0.f), FVector(3.f, 3.f, 7.f), false);
 	for (int32 i = 0; i < 3; ++i)
 	{
-		AddPart(this, Root, EShape::Cube, i == 0 ? FeatherLight : Feather, FVector(-Length * 0.5f + 7.f, 0.f, 0.f), FRotator(0.f, 0.f, i * 120.f),
-			FVector(10.f, 0.4f, 5.f), MaterialCache, false);
+		Shapes->AddPart(this, Root, EShape::Cube, i == 0 ? FeatherLight : Feather, FVector(-Length * 0.5f + 7.f, 0.f, 0.f), FRotator(0.f, 0.f, i * 120.f),
+			FVector(10.f, 0.4f, 5.f), false);
+	}
+}
+
+void AOpenWorldArrow::DropFromCarcass()
+{
+	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	bInAnimal = false;
+	Age = 0.f;
+	if (const AOpenWorldGameMode* GameMode = GetWorld()->GetAuthGameMode<AOpenWorldGameMode>(); GameMode && GameMode->GetGenerator())
+	{
+		// lies on the ground where the carcass was
+		const FVector Loc = GetActorLocation();
+		SetActorLocationAndRotation(FVector(Loc.X, Loc.Y, GameMode->GetGenerator()->GetGroundZ(Loc.X, Loc.Y) + 2.f), FRotator(0.f, GetActorRotation().Yaw, 0.f));
 	}
 }
 
@@ -97,17 +111,14 @@ void AOpenWorldArrow::Tick(float DeltaSeconds)
 			const float Penetration = FMath::Lerp(4.f, 22.f, FMath::Clamp(Speed / 6000.f, 0.f, 1.f));
 			SetActorLocationAndRotation(Hit.ImpactPoint - Dir * (Length * 0.5f - Penetration), Dir.Rotation());
 
-			AOpenWorldAnimal* Animal = Cast<AOpenWorldAnimal>(Hit.GetActor());
-			if (Animal && !Animal->IsDead())
+			if (AOpenWorldAnimal* Animal = Cast<AOpenWorldAnimal>(Hit.GetActor()))
 			{
 				bInAnimal = true;
 				AttachToComponent(Hit.GetComponent(), FAttachmentTransformRules::KeepWorldTransform);
-				Animal->ReceiveArrowHit(Hit, Speed, LaunchOrigin);
-			}
-			else if (Animal)
-			{
-				bInAnimal = true;
-				AttachToComponent(Hit.GetComponent(), FAttachmentTransformRules::KeepWorldTransform);
+				if (!Animal->IsDead())
+				{
+					Animal->ReceiveArrowHit(Hit, Speed, LaunchOrigin);
+				}
 			}
 			else if (AOpenWorldGameMode* MutableMode = GetWorld()->GetAuthGameMode<AOpenWorldGameMode>())
 			{

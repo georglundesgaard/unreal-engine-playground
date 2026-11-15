@@ -122,8 +122,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category="Components")
 	TObjectPtr<UInstancedStaticMeshComponent> BloodTrail;
 
-	UPROPERTY(Transient)
-	TMap<uint32, TObjectPtr<UMaterialInstanceDynamic>> MaterialCache;
 
 	EOpenWorldAnimalKind Kind = EOpenWorldAnimalKind::Deer;
 	EOpenWorldAnimalState State = EOpenWorldAnimalState::Graze;

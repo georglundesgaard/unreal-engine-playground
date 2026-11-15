@@ -1268,8 +1268,8 @@ bool AOpenWorldGenerator::CanWalk(const FVector& From, const FVector& To, float 
 		{
 			return Rise <= MaxClimb && -Rise <= MaxDrop;
 		}
-		// smooth terrain: anything steeper than ~40 degrees counts as a cliff
-		return Rise <= FMath::Max(MaxClimb, HalfDist * 0.8f) && -Rise <= FMath::Max(MaxDrop, HalfDist);
+		// smooth terrain: anything steeper than ~40 degrees up counts as a cliff (the movement component can't climb it)
+		return Rise <= FMath::Min(MaxClimb, HalfDist * 0.8f) && -Rise <= FMath::Max(MaxDrop, HalfDist);
 	};
 	return StepOk(From, Mid) && StepOk(Mid, To);
 }
@@ -1277,12 +1277,15 @@ bool AOpenWorldGenerator::CanWalk(const FVector& From, const FVector& To, float 
 void AOpenWorldGenerator::SpawnAnimals()
 {
 	// a separate stream: adding wildlife must not change the terrain or props of existing seeds
-	AnimalStream.Initialize(Seed * 7919 + 101);
+	AnimalStream.Initialize(int32(uint32(Seed) * 7919u + 101u));
 
 	int32 LandTiles = 0;
-	for (int32 I = 0; I < Heights.Num(); ++I)
+	for (int32 Y = 0; Y < GridSize; ++Y)
 	{
-		LandTiles += Heights[I] > WaterLevel ? 1 : 0;
+		for (int32 X = 0; X < GridSize; ++X)
+		{
+			LandTiles += IsLand(X, Y) ? 1 : 0;
+		}
 	}
 	const float Scale = AnimalDensity * LandTiles / 9000.f;
 
