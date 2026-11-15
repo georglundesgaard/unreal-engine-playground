@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "OpenWorldAnimal.h"
 #include "OpenWorldGenerator.generated.h"
 
 class UInstancedStaticMeshComponent;
@@ -102,6 +103,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="Gameplay")
 	int32 NumCrystals = 8;
 
+	/** Scales how many animals live on the island (1 = about 4 deer herds, 3 boar groups and 8 rabbit families on a typical island) */
+	UPROPERTY(EditAnywhere, Category="Gameplay", meta=(ClampMin=0, ClampMax=4))
+	float AnimalDensity = 1.f;
+
 	/** Builds the world for the given seed. Safe to call only once. */
 	void Generate(int32 InSeed);
 
@@ -115,6 +120,23 @@ public:
 
 	/** Converts a world location to 0..1 minimap coordinates (x = right/+Y, y = down/-X) */
 	FVector2D WorldToMap(const FVector& WorldLocation) const;
+
+	/** Ground height under a world XY position */
+	float GetGroundZ(float WorldX, float WorldY) const { return SurfaceZ(WorldX, WorldY); }
+
+	/** True when an animal may stand at this world XY: dry land away from the island edge, no tree trunk */
+	bool IsOpenGround(float WorldX, float WorldY) const;
+
+	/** True when an animal can move from From to To in one stride without wading, climbing a cliff or hitting a tree */
+	bool CanWalk(const FVector& From, const FVector& To, float MaxClimb, float MaxDrop) const;
+
+	const TArray<TObjectPtr<AOpenWorldAnimal>>& GetAnimals() const { return Animals; }
+
+	/** Scales the clouds' soft self-glow (1 = full daylight, 0 = none at night) */
+	void SetCloudGlow(float Glow);
+
+	/** Tops the animal population back up, spawning newcomers out of sight (at least MinDistance from AwayFrom) */
+	void ReplenishAnimals(const FVector& AwayFrom, float MinDistance);
 
 protected:
 
@@ -158,6 +180,9 @@ protected:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AOpenWorldCrystal>> Crystals;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AOpenWorldAnimal>> Animals;
 
 private:
 
@@ -206,6 +231,10 @@ private:
 	/** Detailed vegetation and props built from cylinders, spheres and cones, used with the smooth terrain */
 	void BuildDetailedDecorations(FRandomStream& Stream);
 	void BuildClouds(FRandomStream& Stream);
+	/** Initial wildlife. Uses its own random stream so existing seeds keep the same island. */
+	void SpawnAnimals();
+	/** Spawns a group of animals on suitable ground. Returns how many were spawned. */
+	int32 SpawnGroup(EOpenWorldAnimalKind Kind, int32 Size, const FVector& AwayFrom, float MinDistance);
 	void BuildMapTexture();
 
 	TMap<FName, FLayerBuild> PendingLayers;
@@ -219,5 +248,9 @@ private:
 
 	FVector SpawnLocation = FVector::ZeroVector;
 	int32 Seed = 0;
+	FRandomStream AnimalStream;
+	int32 NextHerdId = 0;
+	/** Animals of each kind the island should support */
+	int32 TargetPopulation[3] = { 0, 0, 0 };
 	bool bGenerated = false;
 };
