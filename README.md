@@ -147,4 +147,4 @@ The project enables Unreal's **Model Context Protocol** plugin with all toolsets
 
 ## License
 
-The project's own code and content are released under the [MIT License](LICENSE). The Third Person template content and other files from Epic Games, including source files marked "Copyright Epic Games, Inc.", remain under the [Unreal Engine EULA](https://www.unrealengine.com/eula).
+The project's own code and content are released under the [MIT License](LICENSE). The Third Person template content and other files from Epic Games, including source files marked "Copyright Epic Games, Inc.", remain under the [Unreal Engine EULA](https://www.unrealengine.com/eula). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

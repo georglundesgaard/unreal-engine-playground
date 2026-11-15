@@ -19,14 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Third-party content
-
-This project is built on Epic Games' Unreal Engine Third Person template. Files
-that come from that template or from the engine (for example the template
-characters, animations, input assets and the Combat, Platforming and
-SideScrolling variants, including source files marked "Copyright Epic Games,
-Inc.") are not covered by the MIT license above. They remain subject to the
-Unreal Engine End User License Agreement: https://www.unrealengine.com/eula
