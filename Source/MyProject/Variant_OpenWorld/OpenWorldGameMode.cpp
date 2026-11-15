@@ -684,7 +684,14 @@ void AOpenWorldGameMode::HuntTest(int32 KindIndex, float Distance)
 		return;
 	}
 
-	// negative distance: field dress the carcass the player is standing next to (same as pressing E)
+	// below -1: walk up to the nearest animal and watch it from -Distance cm, without shooting
+	const bool bObserveOnly = Distance < -1.f;
+	if (bObserveOnly)
+	{
+		Distance = -Distance;
+	}
+
+	// -1: field dress the carcass the player is standing next to (same as pressing E)
 	if (Distance < 0.f)
 	{
 		UE_LOG(LogTemp, Log, TEXT("HuntTest: field dressing %s"), *GetNameSafe(HarvestTarget.Get()));
@@ -781,6 +788,11 @@ void AOpenWorldGameMode::HuntTest(int32 KindIndex, float Distance)
 	const FRotator Face = (Target - Stand).Rotation();
 	PC->SetControlRotation(Face);
 	Character->SetActorRotation(FRotator(0.f, Face.Yaw, 0.f));
+	if (bObserveOnly)
+	{
+		UE_LOG(LogTemp, Log, TEXT("HuntTest: watching %s %s from %.0f m"), *AOpenWorldAnimal::GetKindName(Best->GetKind()), *Best->GetName(), FVector::Dist(Stand, Target) / 100.f);
+		return;
+	}
 	Bow->AddArrows(1);
 
 	// aim above the target to allow for the drop over the flight time

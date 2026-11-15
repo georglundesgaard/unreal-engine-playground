@@ -118,6 +118,18 @@ protected:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<USceneComponent>> LegPivots;
 
+	/** Knee (front) and hock (back) joints, same order as LegPivots */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USceneComponent>> KneePivots;
+
+	/** Left and right ear */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USceneComponent>> EarPivots;
+
+	/** The torso parts, scaled for breathing */
+	UPROPERTY(Transient)
+	TObjectPtr<USceneComponent> BreathPivot;
+
 	/** Blood drops, in world space */
 	UPROPERTY(VisibleAnywhere, Category="Components")
 	TObjectPtr<UInstancedStaticMeshComponent> BloodTrail;
@@ -152,4 +164,10 @@ protected:
 	float BodyBaseZ = 0.f;
 	float TorsoHalfWidth = 0.f;
 	float DeadTime = 0.f;
+	float HeadYaw = 0.f;
+	float Breath = 0.f;
+	float BreathPhase = 0.f;
+	float EarTwitchTimer = 0.f;
+	float EarTwitchAge = 1.f;
+	int32 EarTwitchIndex = -1;
 };

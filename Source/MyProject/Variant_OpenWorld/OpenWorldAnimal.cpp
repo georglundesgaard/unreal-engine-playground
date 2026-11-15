@@ -205,9 +205,18 @@ void AOpenWorldAnimal::BuildBody()
 		return Part;
 	};
 	UOpenWorldShapeLibrary* Shapes = GetWorld()->GetSubsystem<UOpenWorldShapeLibrary>();
-	auto Part = [this, Shapes](USceneComponent* Parent, EShape Shape, const FColor& Color, const FVector& Loc, const FRotator& Rot, const FVector& Size, bool bShadow = true)
+	// coat parts use the soft fur surface unless told otherwise
+	auto Part = [this, Shapes](USceneComponent* Parent, EShape Shape, const FColor& Color, const FVector& Loc, const FRotator& Rot, const FVector& Size,
+		bool bShadow = true, ESurface Surface = ESurface::Fur)
 	{
-		return Shapes->AddPart(this, Parent, Shape, Color, Loc, Rot, Size, bShadow);
+		return Shapes->AddPart(this, Parent, Shape, Color, Loc, Rot, Size, bShadow, Surface);
+	};
+	// a cylinder from A to B in the parent's space
+	auto Limb = [&](USceneComponent* Parent, const FColor& Color, const FVector& A, const FVector& B, float Radius, ESurface Surface = ESurface::Fur)
+	{
+		UStaticMeshComponent* C = Part(Parent, EShape::Cylinder, Color, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f), true, Surface);
+		SetCylinderBetween(C, A, B, Radius);
+		return C;
 	};
 	auto NewPivot = [this](USceneComponent* Parent, const FVector& Loc, const TCHAR* Name)
 	{
@@ -218,116 +227,176 @@ void AOpenWorldAnimal::BuildBody()
 		AddInstanceComponent(Pivot);
 		return Pivot;
 	};
+	auto Shade = [](const FColor& C, float F)
+	{
+		return FColor(uint8(FMath::Min(C.R * F, 255.f)), uint8(FMath::Min(C.G * F, 255.f)), uint8(FMath::Min(C.B * F, 255.f)));
+	};
+	const FColor Black(16, 13, 12);
+	const FColor InnerEar(206, 160, 150);
 
-	// torso: main ellipsoid plus a lighter belly
-	Hittable(Part(Body, EShape::Sphere, S.Coat, FVector::ZeroVector, FRotator::ZeroRotator, T), NAME_None);
-	Part(Body, EShape::Sphere, S.Belly, FVector(0.f, 0.f, -T.Z * 0.18f), FRotator::ZeroRotator, FVector(T.X * 0.8f, T.Y * 0.85f, T.Z * 0.7f));
+	// ---- torso: barrel, deep chest and rounded haunches, all breathing together ----
+	BreathPivot = NewPivot(Body, FVector::ZeroVector, TEXT("Chest"));
+	const bool bRabbit = Kind == EOpenWorldAnimalKind::Rabbit;
+	Hittable(Part(BreathPivot, EShape::Sphere, S.Coat, FVector::ZeroVector, FRotator::ZeroRotator, FVector(T.X, T.Y * 0.92f, T.Z * 0.92f)), NAME_None);
+	Hittable(Part(BreathPivot, EShape::Sphere, S.Coat, FVector(T.X * 0.28f, 0.f, T.Z * 0.04f), FRotator(-8.f, 0.f, 0.f), FVector(T.X * 0.55f, T.Y * 1.02f, T.Z * 1.08f)), NAME_None);
+	Hittable(Part(BreathPivot, EShape::Sphere, S.Coat, FVector(-T.X * 0.3f, 0.f, bRabbit ? -T.Z * 0.05f : T.Z * 0.05f), FRotator::ZeroRotator,
+		bRabbit ? FVector(T.X * 0.62f, T.Y * 1.18f, T.Z * 1.15f) : FVector(T.X * 0.5f, T.Y * 1.0f, T.Z * 1.0f)), NAME_None);
+	// lighter belly, darker back
+	Part(BreathPivot, EShape::Sphere, S.Belly, FVector(0.f, 0.f, -T.Z * 0.2f), FRotator::ZeroRotator, FVector(T.X * 0.78f, T.Y * 0.82f, T.Z * 0.66f));
+	Part(BreathPivot, EShape::Sphere, Shade(S.Coat, 0.72f), FVector(0.f, 0.f, T.Z * 0.3f), FRotator::ZeroRotator, FVector(T.X * 0.86f, T.Y * 0.42f, T.Z * 0.36f));
 	if (Kind == EOpenWorldAnimalKind::Boar)
 	{
 		// bristly dark ridge and a big shoulder hump
-		Part(Body, EShape::Sphere, S.Dark, FVector(T.X * 0.05f, 0.f, T.Z * 0.38f), FRotator::ZeroRotator, FVector(T.X * 0.8f, T.Y * 0.3f, T.Z * 0.35f));
-		Hittable(Part(Body, EShape::Sphere, S.Coat, FVector(T.X * 0.25f, 0.f, T.Z * 0.1f), FRotator::ZeroRotator, FVector(T.X * 0.55f, T.Y * 1.05f, T.Z * 1.1f)), NAME_None);
+		Part(BreathPivot, EShape::Sphere, S.Dark, FVector(T.X * 0.05f, 0.f, T.Z * 0.4f), FRotator::ZeroRotator, FVector(T.X * 0.82f, T.Y * 0.3f, T.Z * 0.38f));
+		Hittable(Part(BreathPivot, EShape::Sphere, S.Coat, FVector(T.X * 0.25f, 0.f, T.Z * 0.12f), FRotator::ZeroRotator, FVector(T.X * 0.55f, T.Y * 1.08f, T.Z * 1.14f)), NAME_None);
 	}
 	else if (Kind == EOpenWorldAnimalKind::Deer)
 	{
 		// white rump patch
-		Part(Body, EShape::Sphere, S.Belly, FVector(-T.X * 0.43f, 0.f, T.Z * 0.08f), FRotator::ZeroRotator, FVector(T.X * 0.18f, T.Y * 0.75f, T.Z * 0.6f));
+		Part(BreathPivot, EShape::Sphere, S.Belly, FVector(-T.X * 0.52f, 0.f, T.Z * 0.02f), FRotator::ZeroRotator, FVector(T.X * 0.07f, T.Y * 0.48f, T.Z * 0.46f));
 	}
 
-	// legs: pivot at the hip/shoulder, cylinder hanging down, dark hoof
+	// ---- legs: thigh and upper leg, a knee, a slimmer lower leg and the hoof or paw ----
 	LegPivots.Reset();
+	KneePivots.Reset();
 	const float HipZ = -T.Z * 0.2f;
 	const float LegLen = S.LegLength + T.Z * 0.2f;
+	const float Upper = LegLen * 0.48f;
+	const float Lower = LegLen - Upper;
 	const float HoofH = FMath::Max(S.LegLength * 0.08f, 1.5f);
 	const FVector LegOffsets[4] = {
 		FVector(T.X * 0.32f, -T.Y * 0.3f, HipZ), FVector(T.X * 0.32f, T.Y * 0.3f, HipZ),
 		FVector(-T.X * 0.32f, -T.Y * 0.3f, HipZ), FVector(-T.X * 0.32f, T.Y * 0.3f, HipZ) };
 	static const TCHAR* LegNames[4] = { TEXT("LegFL"), TEXT("LegFR"), TEXT("LegBL"), TEXT("LegBR") };
+	static const TCHAR* KneeNames[4] = { TEXT("KneeFL"), TEXT("KneeFR"), TEXT("KneeBL"), TEXT("KneeBR") };
 	for (int32 i = 0; i < 4; ++i)
 	{
-		USceneComponent* Pivot = NewPivot(Body, LegOffsets[i], LegNames[i]);
 		const bool bBack = i >= 2;
-		// back legs: thicker thigh
-		const float Thigh = S.LegRadius * (bBack ? 2.4f : 1.9f);
-		Hittable(Part(Pivot, EShape::Sphere, S.Coat, FVector(0.f, 0.f, -LegLen * 0.12f), FRotator::ZeroRotator, FVector(Thigh * 2.2f, Thigh * 1.6f, LegLen * 0.45f)), TagLeg);
-		Hittable(Part(Pivot, EShape::Cylinder, S.Coat, FVector(0.f, 0.f, -(LegLen - HoofH) * 0.5f), FRotator::ZeroRotator,
-			FVector(S.LegRadius * 2.f, S.LegRadius * 2.f, LegLen - HoofH)), TagLeg);
-		Part(Pivot, EShape::Cylinder, S.Dark, FVector(0.f, 0.f, -LegLen + HoofH * 0.5f), FRotator::ZeroRotator,
-			FVector(S.LegRadius * 2.3f, S.LegRadius * 2.3f, HoofH));
+		USceneComponent* Pivot = NewPivot(Body, LegOffsets[i], LegNames[i]);
+		const float Thigh = S.LegRadius * (bBack ? 2.5f : 2.0f) * (bRabbit && bBack ? 1.6f : 1.f);
+		Hittable(Part(Pivot, EShape::Sphere, S.Coat, FVector(bBack ? -Thigh * 0.2f : 0.f, 0.f, -Upper * 0.35f), FRotator::ZeroRotator,
+			FVector(Thigh * 2.3f, Thigh * 1.5f, Upper * 1.1f)), TagLeg);
+		Hittable(Limb(Pivot, S.Coat, FVector::ZeroVector, FVector(0.f, 0.f, -Upper), S.LegRadius * 1.3f), TagLeg);
+
+		USceneComponent* Knee = NewPivot(Pivot, FVector(0.f, 0.f, -Upper), KneeNames[i]);
+		Part(Knee, EShape::Sphere, S.Coat, FVector::ZeroVector, FRotator::ZeroRotator, FVector(S.LegRadius * 2.5f));
+		Hittable(Limb(Knee, Shade(S.Coat, 0.9f), FVector::ZeroVector, FVector(0.f, 0.f, -(Lower - HoofH)), S.LegRadius * 0.95f), TagLeg);
+		if (bRabbit)
+		{
+			// soft paws, long at the back
+			Part(Knee, EShape::Sphere, S.Belly, FVector(bBack ? 3.f : 1.5f, 0.f, -Lower + 1.f), FRotator::ZeroRotator, FVector(bBack ? 9.f : 4.5f, 3.5f, 2.5f));
+		}
+		else
+		{
+			// split hoof, slightly wider at the bottom
+			Limb(Knee, Black, FVector(0.f, 0.f, -(Lower - HoofH)), FVector(0.8f, 0.f, -Lower), S.LegRadius * 1.15f, ESurface::Glossy);
+		}
 		LegPivots.Add(Pivot);
+		KneePivots.Add(Knee);
 	}
 
-	// neck and head
+	// ---- neck: thick where it meets the chest, slimmer at the head ----
 	NeckPivot = NewPivot(Body, FVector(T.X * 0.38f, 0.f, T.Z * 0.18f), TEXT("NeckPivot"));
 	const FVector NeckDir = FRotator(S.NeckAngle, 0.f, 0.f).Vector();
-	Hittable(Part(NeckPivot, EShape::Cylinder, S.Coat, NeckDir * S.NeckLength * 0.5f, FRotator(S.NeckAngle - 90.f, 0.f, 0.f),
-		FVector(S.NeckRadius * 2.f, S.NeckRadius * 2.f, S.NeckLength + S.NeckRadius)), TagNeck);
+	// overlapping ellipsoids that taper towards the head read as one smooth neck
+	const FRotator NeckRot(S.NeckAngle - 90.f, 0.f, 0.f);
+	const float NeckSegs[3][3] = { { 0.12f, 1.35f, 0.7f }, { 0.5f, 1.05f, 0.65f }, { 0.88f, 0.82f, 0.55f } };
+	for (const float* Seg : NeckSegs)
+	{
+		Hittable(Part(NeckPivot, EShape::Sphere, S.Coat, NeckDir * S.NeckLength * Seg[0], NeckRot,
+			FVector(S.NeckRadius * 2.f * Seg[1], S.NeckRadius * 2.f * Seg[1], FMath::Max(S.NeckLength * Seg[2], S.NeckRadius * 2.f * Seg[1]))), TagNeck);
+	}
+	if (Kind == EOpenWorldAnimalKind::Deer)
+	{
+		// pale throat patch
+		Part(NeckPivot, EShape::Sphere, S.Belly, NeckDir * S.NeckLength * 0.85f + FVector(3.f, 0.f, -3.f), FRotator(S.NeckAngle - 90.f, 0.f, 0.f), FVector(10.f, 9.f, 14.f));
+	}
 
 	HeadPivot = NewPivot(NeckPivot, NeckDir * S.NeckLength, TEXT("HeadPivot"));
 	const FVector H = S.Head;
 	const FRotator HeadTilt(-20.f, 0.f, 0.f);
 	const FVector HeadFwd = HeadTilt.Vector();
-	Hittable(Part(HeadPivot, EShape::Sphere, S.Coat, HeadFwd * H.X * 0.3f, HeadTilt, H), TagHead);
+	Hittable(Part(HeadPivot, EShape::Sphere, S.Coat, HeadFwd * H.X * 0.25f, HeadTilt, FVector(H.X * 0.8f, H.Y, H.Z)), TagHead);
+	EarPivots.Reset();
+	auto Ear = [&](float Side, const FVector& Base, const FRotator& Rot, const FVector& Size, EShape Shape, bool bInner)
+	{
+		USceneComponent* Pivot = NewPivot(HeadPivot, Base, Side < 0.f ? TEXT("EarL") : TEXT("EarR"));
+		const FVector Axis = Rot.RotateVector(FVector::UpVector);
+		Hittable(Part(Pivot, Shape, S.Coat, Axis * Size.Z * 0.45f, Rot, Size), TagHead);
+		if (bInner)
+		{
+			Part(Pivot, EShape::Sphere, InnerEar, Axis * Size.Z * 0.45f + Rot.RotateVector(FVector(Size.X * 0.22f, 0.f, 0.f)), Rot, Size * FVector(0.5f, 0.7f, 0.75f), false, ESurface::Plain);
+		}
+		EarPivots.Add(Pivot);
+	};
+	auto Eye = [&](float Side, const FVector& Loc, float Size)
+	{
+		Part(HeadPivot, EShape::Sphere, Black, Loc + FVector(0.f, Side * Size * 0.15f, 0.f), FRotator::ZeroRotator, FVector(Size), false, ESurface::Glossy);
+	};
 
 	switch (Kind)
 	{
 	case EOpenWorldAnimalKind::Deer:
 	{
-		// muzzle, black nose, big ears, antlers on stags
-		Part(HeadPivot, EShape::Sphere, S.Belly, HeadFwd * H.X * 0.62f + FVector(0.f, 0.f, -2.f), HeadTilt, FVector(H.X * 0.45f, H.Y * 0.7f, H.Z * 0.6f));
-		Part(HeadPivot, EShape::Sphere, S.Dark, HeadFwd * H.X * 0.82f, HeadTilt, FVector(5.f, 6.f, 5.f), false);
+		// long muzzle with a pale band, glossy black nose, big ears, antlers on stags
+		Part(HeadPivot, EShape::Sphere, S.Coat, HeadFwd * H.X * 0.62f + FVector(0.f, 0.f, -2.f), HeadTilt, FVector(H.X * 0.62f, H.Y * 0.66f, H.Z * 0.62f));
+		Part(HeadPivot, EShape::Sphere, S.Belly, HeadFwd * H.X * 0.78f + FVector(0.f, 0.f, -4.f), HeadTilt, FVector(H.X * 0.3f, H.Y * 0.6f, H.Z * 0.42f));
+		Part(HeadPivot, EShape::Sphere, Black, HeadFwd * H.X * 0.95f + FVector(0.f, 0.f, -1.f), HeadTilt, FVector(5.f, 6.f, 4.5f), false, ESurface::Glossy);
 		for (float Side : { -1.f, 1.f })
 		{
-			Part(HeadPivot, EShape::Sphere, S.Coat, FVector(-2.f, Side * H.Y * 0.6f, H.Z * 0.45f), FRotator(10.f, 0.f, Side * 50.f), FVector(5.f, 4.f, 16.f));
-			Part(HeadPivot, EShape::Sphere, S.Dark, FVector(H.X * 0.2f, Side * H.Y * 0.38f, H.Z * 0.2f), FRotator::ZeroRotator, FVector(4.f, 3.f, 4.f), false);
+			Ear(Side, FVector(-H.X * 0.1f, Side * H.Y * 0.38f, H.Z * 0.38f), FRotator(12.f, 0.f, -Side * 55.f), FVector(4.f, 7.f, 17.f), EShape::Sphere, true);
+			Eye(Side, FVector(H.X * 0.22f, Side * H.Y * 0.4f, H.Z * 0.18f), 4.2f);
 			if (bStag)
 			{
 				const FColor Antler(214, 196, 160);
 				const FVector Base(0.f, Side * 5.f, H.Z * 0.45f);
-				const FVector Tip = Base + FVector(-8.f, Side * 18.f, 38.f);
-				UStaticMeshComponent* Beam = Part(HeadPivot, EShape::Cylinder, Antler, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f));
-				SetCylinderBetween(Beam, Base, Tip, 1.8f);
-				for (float F : { 0.35f, 0.7f })
+				const FVector Mid = Base + FVector(-6.f, Side * 12.f, 22.f);
+				const FVector Tip = Mid + FVector(4.f, Side * 4.f, 20.f);
+				Limb(HeadPivot, Antler, Base, Mid, 1.9f, ESurface::Plain);
+				Limb(HeadPivot, Antler, Mid, Tip, 1.5f, ESurface::Plain);
+				for (float F : { 0.3f, 0.85f })
 				{
-					const FVector Root = FMath::Lerp(Base, Tip, F);
-					UStaticMeshComponent* Tine = Part(HeadPivot, EShape::Cylinder, Antler, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f));
-					SetCylinderBetween(Tine, Root, Root + FVector(10.f, Side * 4.f, 12.f), 1.3f);
+					const FVector Root = F < 0.5f ? FMath::Lerp(Base, Mid, F * 2.f) : FMath::Lerp(Mid, Tip, F);
+					Limb(HeadPivot, Antler, Root, Root + FVector(10.f, Side * 3.f, 11.f), 1.2f, ESurface::Plain);
 				}
 			}
 		}
-		// short white tail
+		// short tail, white underneath
 		TailPivot = NewPivot(Body, FVector(-T.X * 0.5f, 0.f, T.Z * 0.25f), TEXT("TailPivot"));
-		Part(TailPivot, EShape::Sphere, S.Belly, FVector(-3.f, 0.f, -5.f), FRotator(20.f, 0.f, 0.f), FVector(7.f, 6.f, 14.f));
+		Part(TailPivot, EShape::Sphere, S.Coat, FVector(-3.f, 0.f, -5.f), FRotator(20.f, 0.f, 0.f), FVector(7.f, 6.f, 14.f));
+		Part(TailPivot, EShape::Sphere, S.Belly, FVector(-1.5f, 0.f, -6.f), FRotator(20.f, 0.f, 0.f), FVector(6.f, 5.f, 12.f));
 		break;
 	}
 	case EOpenWorldAnimalKind::Boar:
 	{
-		// flat snout disc, tusks, small ears
-		UStaticMeshComponent* Snout = Part(HeadPivot, EShape::Cylinder, S.Belly, FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f));
-		SetCylinderBetween(Snout, HeadFwd * H.X * 0.5f, HeadFwd * H.X * 0.78f, H.Z * 0.24f);
-		Part(HeadPivot, EShape::Cylinder, FColor(180, 120, 116), HeadFwd * H.X * 0.79f, FRotator(HeadTilt.Pitch - 90.f, 0.f, 0.f), FVector(H.Z * 0.42f, H.Z * 0.42f, 1.f), false);
+		// long wedge of a head, flat snout disc, tusks, small pointed ears
+		Part(HeadPivot, EShape::Sphere, S.Coat, HeadFwd * H.X * 0.5f, HeadTilt, FVector(H.X * 0.7f, H.Y * 0.72f, H.Z * 0.7f));
+		Limb(HeadPivot, Shade(S.Coat, 1.1f), HeadFwd * H.X * 0.5f, HeadFwd * H.X * 0.8f, H.Z * 0.24f);
+		Part(HeadPivot, EShape::Cylinder, FColor(176, 118, 112), HeadFwd * H.X * 0.81f, FRotator(HeadTilt.Pitch - 90.f, 0.f, 0.f), FVector(H.Z * 0.44f, H.Z * 0.44f, 1.5f), false, ESurface::Glossy);
 		for (float Side : { -1.f, 1.f })
 		{
-			UStaticMeshComponent* Tusk = Part(HeadPivot, EShape::Cone, FColor(236, 230, 210), FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f), false);
+			UStaticMeshComponent* Tusk = Part(HeadPivot, EShape::Cone, FColor(236, 230, 210), FVector::ZeroVector, FRotator::ZeroRotator, FVector(1.f), false, ESurface::Glossy);
 			const FVector Root = HeadFwd * H.X * 0.55f + FVector(0.f, Side * H.Y * 0.28f, -H.Z * 0.2f);
 			SetCylinderBetween(Tusk, Root, Root + FVector(3.f, Side * 4.f, 11.f), 2.2f);
-			Part(HeadPivot, EShape::Cone, S.Dark, FVector(-H.X * 0.15f, Side * H.Y * 0.32f, H.Z * 0.5f), FRotator(0.f, 0.f, Side * 25.f), FVector(8.f, 5.f, 12.f));
-			Part(HeadPivot, EShape::Sphere, FColor(20, 16, 14), FVector(H.X * 0.22f, Side * H.Y * 0.36f, H.Z * 0.12f), FRotator::ZeroRotator, FVector(3.5f), false);
+			Ear(Side, FVector(-H.X * 0.12f, Side * H.Y * 0.3f, H.Z * 0.42f), FRotator(-5.f, 0.f, -Side * 25.f), FVector(8.f, 4.f, 12.f), EShape::Cone, false);
+			Eye(Side, FVector(H.X * 0.2f, Side * H.Y * 0.36f, H.Z * 0.14f), 3.2f);
 		}
 		TailPivot = NewPivot(Body, FVector(-T.X * 0.5f, 0.f, T.Z * 0.2f), TEXT("TailPivot"));
 		Part(TailPivot, EShape::Cylinder, S.Dark, FVector(-3.f, 0.f, -9.f), FRotator(-20.f, 0.f, 0.f), FVector(2.5f, 2.5f, 18.f), false);
+		Part(TailPivot, EShape::Sphere, S.Dark, FVector(-6.f, 0.f, -18.f), FRotator::ZeroRotator, FVector(4.f, 4.f, 7.f), false);
 		break;
 	}
 	case EOpenWorldAnimalKind::Rabbit:
 	{
-		// long upright ears, white cotton tail
+		// round cheeks, pink nose, long ears laid slightly back, white cotton tail
+		Part(HeadPivot, EShape::Sphere, S.Coat, HeadFwd * H.X * 0.48f + FVector(0.f, 0.f, -1.f), FRotator::ZeroRotator, FVector(H.X * 0.62f, H.Y * 0.86f, H.Z * 0.72f));
+		Part(HeadPivot, EShape::Sphere, FColor(206, 140, 140), HeadFwd * H.X * 0.76f, FRotator::ZeroRotator, FVector(2.4f), false, ESurface::Glossy);
 		for (float Side : { -1.f, 1.f })
 		{
-			Hittable(Part(HeadPivot, EShape::Sphere, S.Coat, FVector(-3.f, Side * 2.5f, H.Z * 0.5f + 7.f), FRotator(-15.f, 0.f, Side * 12.f), FVector(3.5f, 2.f, 16.f)), TagHead);
-			Part(HeadPivot, EShape::Sphere, FColor(20, 16, 14), FVector(H.X * 0.25f, Side * H.Y * 0.4f, H.Z * 0.15f), FRotator::ZeroRotator, FVector(2.5f), false);
+			Ear(Side, FVector(-H.X * 0.15f, Side * 2.2f, H.Z * 0.35f), FRotator(18.f, 0.f, -Side * 10.f), FVector(4.f, 2.2f, 17.f), EShape::Sphere, true);
+			Eye(Side, FVector(H.X * 0.22f, Side * H.Y * 0.4f, H.Z * 0.15f), 2.6f);
 		}
-		Part(HeadPivot, EShape::Sphere, FColor(200, 140, 140), HeadFwd * H.X * 0.68f, FRotator::ZeroRotator, FVector(2.5f), false);
-		TailPivot = NewPivot(Body, FVector(-T.X * 0.5f, 0.f, T.Z * 0.15f), TEXT("TailPivot"));
+		TailPivot = NewPivot(Body, FVector(-T.X * 0.55f, 0.f, T.Z * 0.15f), TEXT("TailPivot"));
 		Part(TailPivot, EShape::Sphere, FColor(246, 244, 240), FVector(-2.f, 0.f, 0.f), FRotator::ZeroRotator, FVector(8.f));
 		break;
 	}
@@ -900,6 +969,14 @@ void AOpenWorldAnimal::UpdatePose(float DeltaSeconds)
 		{
 			LegPivots[i]->SetRelativeRotation(FRotator(FMath::Lerp(LegPivots[i]->GetRelativeRotation().Pitch, (i < 2 ? 25.f : -20.f), Ease), 0.f, 0.f));
 		}
+		for (int32 i = 0; i < KneePivots.Num(); ++i)
+		{
+			KneePivots[i]->SetRelativeRotation(FRotator(-15.f * Ease, 0.f, 0.f));
+		}
+		if (BreathPivot)
+		{
+			BreathPivot->SetRelativeScale3D(FVector::OneVector);
+		}
 		if (NeckPivot)
 		{
 			NeckPivot->SetRelativeRotation(FRotator(-25.f * Ease, 0.f, 0.f));
@@ -925,9 +1002,44 @@ void AOpenWorldAnimal::UpdatePose(float DeltaSeconds)
 		Phases[0] = 0.f; Phases[1] = UE_PI; Phases[2] = UE_PI; Phases[3] = 0.f;
 	}
 	const float Swing = S.LegSwing * (bRunning ? 1.3f : 1.f) * Amount;
+	// the knee folds while the leg swings forward and straightens to carry the weight
+	const float KneeFold = (bRunning || bHopper ? 70.f : 45.f) * Amount;
 	for (int32 i = 0; i < LegPivots.Num(); ++i)
 	{
 		LegPivots[i]->SetRelativeRotation(FRotator(FMath::Sin(GaitPhase + Phases[i]) * Swing, 0.f, 0.f));
+		if (KneePivots.IsValidIndex(i))
+		{
+			const float Fold = FMath::Max(0.f, FMath::Cos(GaitPhase + Phases[i])) * KneeFold;
+			// front knees fold the hoof back; hind hocks fold it back too, a bit less
+			KneePivots[i]->SetRelativeRotation(FRotator(-Fold * (i < 2 ? 1.f : 0.7f), 0.f, 0.f));
+		}
+	}
+
+	// breathing: slow at rest, panting after a run
+	const float Time = GetWorld()->GetTimeSeconds();
+	const bool bWinded = State == EOpenWorldAnimalState::Flee || State == EOpenWorldAnimalState::Charge || bRunning;
+	Breath = FMath::FInterpTo(Breath, bWinded ? 1.f : 0.f, DeltaSeconds, bWinded ? 2.f : 0.3f);
+	BreathPhase = FMath::Fmod(BreathPhase + DeltaSeconds * UE_TWO_PI * FMath::Lerp(0.3f, 1.6f, Breath), UE_TWO_PI);
+	if (BreathPivot)
+	{
+		const float Swell = FMath::Sin(BreathPhase) * FMath::Lerp(0.02f, 0.045f, Breath);
+		BreathPivot->SetRelativeScale3D(FVector(1.f, 1.f + Swell, 1.f + Swell));
+	}
+
+	// ears flick now and then, and swivel towards a sound when alert
+	EarTwitchTimer -= DeltaSeconds;
+	if (EarTwitchTimer <= 0.f)
+	{
+		EarTwitchTimer = Stream.FRandRange(1.5f, 5.f);
+		EarTwitchIndex = EarPivots.Num() > 0 ? Stream.RandRange(0, EarPivots.Num() - 1) : -1;
+		EarTwitchAge = 0.f;
+	}
+	EarTwitchAge += DeltaSeconds;
+	for (int32 i = 0; i < EarPivots.Num(); ++i)
+	{
+		const float Flick = (i == EarTwitchIndex && EarTwitchAge < 0.3f) ? FMath::Sin(EarTwitchAge / 0.3f * UE_PI) * 28.f : 0.f;
+		const float Prick = State == EOpenWorldAnimalState::Alert ? -12.f : (State == EOpenWorldAnimalState::Flee ? 20.f : 0.f);
+		EarPivots[i]->SetRelativeRotation(FMath::RInterpTo(EarPivots[i]->GetRelativeRotation(), FRotator(Prick, 0.f, (i == 0 ? -1.f : 1.f) * Flick), DeltaSeconds, 14.f));
 	}
 
 	// body bounce and rocking
@@ -951,9 +1063,21 @@ void AOpenWorldAnimal::UpdatePose(float DeltaSeconds)
 	{
 		NeckPivot->SetRelativeRotation(FRotator(S.GrazeNeck * HeadDown - Rock * 0.5f, 0.f, 0.f));
 	}
+	// an alert animal turns its head towards the disturbance
+	float LookYaw = 0.f;
+	if (State == EOpenWorldAnimalState::Alert)
+	{
+		LookYaw = FMath::Clamp(FRotator::NormalizeAxis((Threat - GetActorLocation()).Rotation().Yaw - GetActorRotation().Yaw), -55.f, 55.f);
+	}
+	else if (State == EOpenWorldAnimalState::Graze && HeadDown < 0.3f)
+	{
+		// idle glances around
+		LookYaw = FMath::Sin(Time * 0.45f + HerdId * 1.7f) * 25.f;
+	}
+	HeadYaw = FMath::FInterpTo(HeadYaw, LookYaw, DeltaSeconds, 4.f);
 	if (HeadPivot)
 	{
-		HeadPivot->SetRelativeRotation(FRotator(S.GrazeHead * HeadDown + Nibble, 0.f, 0.f));
+		HeadPivot->SetRelativeRotation(FRotator(S.GrazeHead * HeadDown + Nibble, HeadYaw, 0.f));
 	}
 
 	// tails flick up when alarmed (a deer's white flag)
