@@ -4,6 +4,7 @@
 [![C++](https://img.shields.io/badge/C%2B%2B-00599C?logo=cplusplus&logoColor=white)](Source/MyProject)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](#requirements)
 [![Git LFS](https://img.shields.io/badge/Git%20LFS-enabled-F64935?logo=git&logoColor=white)](.gitattributes)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/georglundesgaard/unreal-engine-playground)](https://github.com/georglundesgaard/unreal-engine-playground/commits/main)
 [![Pull requests](https://img.shields.io/github/issues-pr-closed/georglundesgaard/unreal-engine-playground)](https://github.com/georglundesgaard/unreal-engine-playground/pulls?q=is%3Apr)
 
@@ -47,6 +48,13 @@ To replay a specific island, open the map with a seed, for example `?Seed=1234` 
 Both styles come from the same height map, so crystals and the spawn point stay in the same places when you switch. Vegetation is generated in each style's own look. Everything is placed on whichever ground surface is active.
 
 ### Hunting
+
+| | |
+|---|---|
+| ![Aiming the bow at a deer herd: over-the-shoulder camera, crosshair and full-draw meter](Docs/Images/hunting-aim.jpg) | ![A wounded boar charging the player](Docs/Images/hunting-boar-charge.jpg) |
+| *Aiming at a herd of deer, at full draw* | *A wounded boar charges* |
+| ![A boar carcass with a blood trail and the field-dress prompt](Docs/Images/hunting-blood-trail.jpg) | ![The island at night, lit by the moon](Docs/Images/hunting-night.jpg) |
+| *Following the blood trail to the carcass* | *Night falls* |
 
 You carry a **recurve bow** and a quiver of 12 arrows (24 max).
 
@@ -123,7 +131,8 @@ You can also right-click `MyProject.uproject`, choose **Generate Visual Studio p
 
 ```
 Config/                       Project settings (startup map, game mode, asset manager)
-Content/Variant_OpenWorld/    Lvl_OpenWorld map, M_TerrainVertexColor material
+Content/Variant_OpenWorld/    Lvl_OpenWorld map, M_TerrainVertexColor and M_Cloud materials
+Docs/Images/                  README screenshots
 Content/...                   Template characters, input and variant levels
 Source/MyProject/
   Variant_OpenWorld/          Open-world island game (generator, crystal, animals, bow and arrows, game mode, HUD)
@@ -135,3 +144,7 @@ Source/MyProject/
 ## Editor automation
 
 The project enables Unreal's **Model Context Protocol** plugin with all toolsets. When the editor is running, AI agents such as Claude Code can control it through MCP: `.mcp.json` points them at the editor's MCP server, `http://127.0.0.1:8000/mcp`.
+
+## License
+
+The project's own code and content are released under the [MIT License](LICENSE). The Third Person template content and other files from Epic Games, including source files marked "Copyright Epic Games, Inc.", remain under the [Unreal Engine EULA](https://www.unrealengine.com/eula).
